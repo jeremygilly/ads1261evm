@@ -122,9 +122,9 @@ class ADC1261:
 	def convert_to_mV(self, array, reference = 5000, gain = 1):
 		# Only for use without CRC checking!!
 		#use twos complement online to check
-		MSB = array[2]
-		MID = array[3]
-		LSB = array[4]
+		MSB = array[0]
+		MID = array[1]
+		LSB = array[2]
 		bit24 = (MSB<<16)+(MID<<8)+LSB
 		if MSB>127: # i.e. signed negative
 			bits_from_fullscale = (2**24-bit24)
@@ -191,33 +191,8 @@ def getID():
 				if not GPIO.input(adc.drdy):
 					#r = adc.spi.xfer2([1,4,1])
 					r = adc.spi.xfer2(read)
-					if r[0] == 255 and r[1] == 0x12:
-						MSB0 = r[2]
-						MID0 = r[3]
-						LSB0 = r[4]
-						print("Int original:",MSB0,MID0,LSB0)
-						MSB1 = MSB0 << 16
-						MID1 = MID0 << 8
-						LSB1 = LSB0
-						print("Shifted int:",MSB1,MID1,LSB1)
-						print("Summed shifted ints:",MSB1+MID1+LSB1)
-						print("Difference:", (MSB1+MID1+LSB1)*5000/2**23)
-						a = adc.convert_to_mV(r)
-						print("Function test:", adc.convert_to_mV(r))
-						# user python silce to remove '0b'
-
-						
-						#MSB2 = bin(MSB1)
-						#MID2 = bin(MID1)
-						#LSB2 = bin(LSB1)
-						#print("Shifted bin:",MSB2,MID2,LSB2)
-						#Complement = MSB2+MID2+LSB2
-						#print("Added bin:", Complement)
-						#Original = [bin(MSB0),bin(MID0),bin(LSB0)]
-						#print("Original bin:", Original)
-					#for i in r:
-						##if i != 0:
-							#print(i)
+					a = adc.convert_to_mV(r[2:5])
+					print(a)
 					adc.end()
 				
 	except KeyboardInterrupt:
