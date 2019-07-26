@@ -1,15 +1,30 @@
 # Collect data from ADS1261EVM and print result.
 # ADS1261 Data Sheet: www.ti.com/lit/ds/symlink/ads1261.pdf
 # ADS1261EVM User Guide: www.ti.com/lit/ug/sbau293a/sbau293a.pdf
-# Jeremy Gillbanks
-# 19 July 2019
+# Author: Jeremy Gillbanks
+# First updated: 19 July 2019
+# Last updated: 22 July 2019
+
+# Recommended pin mapping for Raspberry Pi 3 (assuming SPI bus 0, device 0)
+# RPi 3 to ADS1261EVM
+# SPI0 MOSI (pin 19) to DIN 
+# SPI0 MISO (pin 21) to DOUT
+# SPI0 SCLK (pin 23) to SCLK
+# SPI0 CE0 (pin 24) to /CS
+# GPIO 25 (pin 22) to /RST
+# GPIO 24 (pin 18) to /PWDN
+# GPIO 23 (pin 16) to /DRDY
+
 
 import numpy as np
 import spidev
 import sys
 import time
+import RPi.GPIO as GPIO
+import binascii
 
-class ADC:
+
+class ADC1261:
 	
 	# From Table 29: Register Map Summary (pg 59 of ADS1261 datasheet)
 	registerAddress = dict([
@@ -40,66 +55,175 @@ class ADC:
 		('RREG', [0x20, "Read register data. Did you add the register to read?"]),
 		('WREG', [0x40, "Write to register. Did you add the register to write to?"]),
 		('LOCK', [0xF2, "Lock registers from editing."]),
-		('UNLOCK', [0xF5, "Unlock regiters from editing."])
+		('UNLOCK', [0xF5, "Unlock registers from editing."])
 	])
 	
 	def __init__(self):
-		bus = 0
-		device = 0
+		self.bus = 0
+		self.device = 0
 		
-		spi = spidev.SpiDev()
-		spi.open(bus, device)
-		spi.max_speed_hz = 1e6 # 1 MHz is the minimum external clock speed allowable: 7.3 Recommended Operating Conditions (pg 7).
-		spi.mode = 1 # 9.5.1 of ADS1261 datasheet (pg 50)
-		spi.bits_per_word = 8 # Datasheet says 24-bit word for some parts. But that word is made of three 8-bit registers.
-		spi.lsbfirst = False # Appears to be false according to Table 12. Be wary of full-scale and offset calibration registers (need 24-bit for words)
-		bits = 24 # This is to do with future conversions (1/2**24) - not an SPI read/write issue.
+		# Set all pin numbering with board numbering scheme
+		GPIO.setmode(GPIO.BOARD)
+		# GPIO 25 (pin 22) to /RST
+		# GPIO 24 (pin 18) to /PWDN
+		# GPIO 23 (pin 16) to /DRDY
+		self.rst = 22
+		self.pwdn = 18
+		self.drdy = 16
+		GPIO.setup(self.rst, GPIO.OUT)
+		GPIO.setup(self.pwdn, GPIO.OUT)
+		GPIO.setup(self.drdy, GPIO.IN)
 		
-		Arbitrary = 0 # This is command byte 2 as per Table 16.
-		CRC2 = 1 # Change this to 0 to disable Cyclic Redundancy Checks (and 1 to enable) per Table 35: MODE3 Register Field Description.
-		Ending = 0 # This is command byte 4 per Table 16.
+		self.spi = spidev.SpiDev()
+		self.spi.open(self.bus, self.device)
+		self.spi.max_speed_hz = 1000000 # 1 MHz is the minimum external clock speed allowable: 7.3 Recommended Operating Conditions (pg 7).
+		self.spi.mode = 1 # 9.5.1 of ADS1261 datasheet (pg 50)
+		self.spi.bits_per_word = 8 # Datasheet says 24-bit word for some parts. But that word is made of three 8-bit registers.
+		self.spi.lsbfirst = False # Appears to be false according to Table 12. Be wary of full-scale and offset calibration registers (need 24-bit for words)
+		self.bits = 24 # This is to do with future conversions (1/2**24) - not an SPI read/write issue.
+		
+		self.Arbitrary = 0 # This is command byte 2 as per Table 16.
+		self.CRC2 = 1 # Change this to 0 to disable Cyclic Redundancy Checks (and 1 to enable) per Table 35: MODE3 Register Field Description.
+		self.Ending = 0 # This is command byte 4 per Table 16.
 		
 	# to send a message: bytearray([commandByte1['NOP'][0], self.Arbitrary, self.CRC2, self.Ending])
 	# if reading/writing registers: commandByte1['RREG'][0] + registerAddress['ID']
-		
-	def send(human_message, hex_message):
+	
+	def gpio(self, command, status):
+		if command.upper() == "RESET" and status.lower() == "high":
+			GPIO.output(self.rst, GPIO.HIGH)
+		elif command.upper() == "RESET" and status.lower() == "low":
+			GPIO.output(self.rst, GPIO.LOW)
+		elif command.upper() == "PWDN" and status.lower() == "high":
+			GPIO.output(self.pwdn, GPIO.HIGH)
+		elif command.upper() == "PWDN" and status.lower() == "low":
+			GPIO.output(self.pwdn, GPIO.LOW)
+		elif command.upper() == "DRDY" and status.lower() == "high":
+			GPIO.output(self.drdy, GPIO.HIGH)
+		elif command.upper() == "DRDY" and status.lower() == "low":
+			GPIO.output(self.drdy, GPIO.LOW)
+		else:
+			print('Invalid gpio(command,status). Please use "RESET", "PWDN", or, "DRDY"; and "high" or "low".') 
+			
+	def send(self, human_message, hex_message):
 		try:
-			byte_message = bytearray(hex_message)
-			spi.writebytes(byte_message)
-			return 1
-		except:
+			byte_message = hex_message
+			self.spi.xfer2(byte_message)
+			print(human_message, byte_message, hex_message)
+			return 0
+		except Exception as e:
 			print ("Message send failure:", human_message)
 			print ("Attempted hex message:", hex_message)
 			print ("Attempted byte message:", byte_message)
+			print(e)
+			self.spi.close()
 			sys.exit()
+			
+	def convert_to_mV(self, array, reference = 5000, gain = 1):
+		# Only for use without CRC checking!!
+		#use twos complement online to check
+		MSB = array[2]
+		MID = array[3]
+		LSB = array[4]
+		bit24 = (MSB<<16)+(MID<<8)+LSB
+		if MSB>127: # i.e. signed negative
+			bits_from_fullscale = (2**24-bit24)
+			mV = -bits_from_fullscale*reference/(gain*2**23)
+		else:
+			mV = bit24*reference/(gain*2**23)
+		return mV
 	
+	def end(self):
+		self.spi.close()
+		sys.exit()
 
+def main():
+	# Set reset/PWDN pin high
 	
-	
+	while(True):
+		pass	
+		# Send stop command
 		
-	
-def end():
-	spi.close()
-	sys.exit()
-
-#try:
-	#whatever
-#except (KeyboardInterrupt, SystemExit):
-	#raise
+		# Write register data
 		
-# general procedure
-# set reset/PWDN high
-# send stop command (just in case)
-# write register data
-# read register data (verify above command)
-# wait for internal reference to settle
-# send start command
-# check if hardware DRDY
-# if DRDY low, then read data
-# change ADC settings. If required: go back up to stop command, if not: check hardware DRDY
+		# Read register data to confirm.
+		# Print register data.
+		
+		# Wait for internal reference to settle (unknown time constant)
+		
+		# Send start command.
+		
+		# Check if hardware /DRDY
+		
+		# if /DRDY is low, then read data.
+			# else check hardware /DRDY
+
+		
+def getID():
+	adc = ADC1261()
+	adc.gpio(command="RESET",status="high")
+	adc.gpio(command="pwdn", status="high")
+	#adc.send(adc.commandByte1['STOP'][1],adc.commandByte1['STOP'][0])
+	# print('Print test', bin(adc.commandByte1['RREG'][0]), bin(adc.commandByte1['RREG'][0]+0x0))
+	#adc.send(adc.commandByte1['RREG'][1], [adc.commandByte1['RREG'][0]+0x0,adc.Arbitrary,adc.CRC2,adc.Ending])
+	#print(bytearray([adc.commandByte1['RREG'][0]+0x0,adc.Arbitrary,adc.CRC2,adc.Ending]))
+	#adc.send("Figure 78 test", [0x22,0x00,0x01,0x00,0x00,0x00])
+	#adc.spi.xfer2([int(0x22),int(0x00),int(0x01),int(0x00),int(0x00),int(0x00)])
+	#a = [0x22,0x00,0x00,0x00,0x00,0x00]
+	stop = [0x0A,0x00,0x00,0x00]
+	start = [0x08, 0x00, 0x00, 0x00]
+	read = [0x12,0,0,0,0,0,0,0,0]
+	wreg = [0x40+0x11,84,0,0,0,0]
+	rreg = [0x20+0x11,0,0,0,0,0]
+	b = binascii.hexlify(bytearray([0x22,0x00,0x00,0x00,0x00,0x00]))
+	#print("Sent:",a)
+	adc.spi.xfer2(stop)
+	adc.spi.xfer2(wreg)
+	r = adc.spi.xfer2(rreg)
+	print ("RREG:",r)
+	print("Reference:",adc.spi.xfer2([0x20+0x06,0,0]))
+	print("Gain:", adc.spi.xfer2([0x20+0x10,0,0]))
+	adc.spi.xfer2(start)
+	try:
+		while(True):
+		# if DRDY is high?? then read, else, wait.
+			if GPIO.input(adc.drdy):
+				if not GPIO.input(adc.drdy):
+					#r = adc.spi.xfer2([1,4,1])
+					r = adc.spi.xfer2(read)
+					if r[0] == 255 and r[1] == 0x12:
+						MSB0 = r[2]
+						MID0 = r[3]
+						LSB0 = r[4]
+						print("Int original:",MSB0,MID0,LSB0)
+						MSB1 = MSB0 << 16
+						MID1 = MID0 << 8
+						LSB1 = LSB0
+						print("Shifted int:",MSB1,MID1,LSB1)
+						print("Summed shifted ints:",MSB1+MID1+LSB1)
+						print("Difference:", (MSB1+MID1+LSB1)*5000/2**23)
+						a = adc.convert_to_mV(r)
+						print("Function test:", adc.convert_to_mV(r))
+						# user python silce to remove '0b'
+
+						
+						#MSB2 = bin(MSB1)
+						#MID2 = bin(MID1)
+						#LSB2 = bin(LSB1)
+						#print("Shifted bin:",MSB2,MID2,LSB2)
+						#Complement = MSB2+MID2+LSB2
+						#print("Added bin:", Complement)
+						#Original = [bin(MSB0),bin(MID0),bin(LSB0)]
+						#print("Original bin:", Original)
+					#for i in r:
+						##if i != 0:
+							#print(i)
+					adc.end()
+				
+	except KeyboardInterrupt:
+		adc.end()
 
 
-# Data type trials
-a = bytearray([ADC.commandByte1['STOP'][0]+1, 0, 1, 0])
-print ("Byte array", a)
-print ("Integers:", int.from_bytes(a, "little", signed=False))
+if __name__ == "__main__":
+	getID()
+	# main()
