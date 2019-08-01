@@ -244,7 +244,7 @@ def main():
 	adc.choose_inputs(positive = 'AIN4', negative = 'AIN5')
 	
 	# Set reset/PWDN pin high
-	
+	### test!!
 	#while(True):
 		#pass	
 		# Send stop command
