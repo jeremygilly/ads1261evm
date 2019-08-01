@@ -295,13 +295,13 @@ def getID():
 		adc.end()
 
 # Potential use cases:
-# determine which pins to use
-# choose frequency
+# determine which pins to use (done!)
+# choose frequency 
 # averaging??
 # print adc value
-# check for errors
+# check for errors (done! for register writes)
 # date/time stamps
-# CRC on/off
+# CRC on/off (should be a register read/write function)
 
 if __name__ == "__main__":
 	main()
