@@ -62,23 +62,28 @@ class ADC1261:
 		('UNLOCK', [0xF5, "Unlock registers from editing."])
 	])
 	
-	IMUXregister = dict([
-		('AIN0', int('0000',2)),
-		('AIN1', int('0001',2)),
-		('AIN2', int('0010',2)),
-		('AIN3', int('0011',2)),
-		('AIN4', int('0100',2)),
-		('AIN5', int('0101',2)),
-		('AIN6', int('0110',2)),
-		('AIN7', int('0111',2)),
-		('AIN8', int('1000',2)),
-		('AIN9', int('1001',2)),
-		('AINCOM', int('1010',2)),
-		('NONE', int('1111',2))
+	INPMUXregister = dict([
+	# Check Table 43 in ADS1261 data sheet
+		('AINCOM', int('0000',2)),
+		('AIN0', int('0001',2)),
+		('AIN1', int('0010',2)),
+		('AIN2', int('0011',2)),
+		('AIN3', int('0100',2)),
+		('AIN4', int('0101',2)),
+		('AIN5', int('0110',2)),
+		('AIN6', int('0111',2)),
+		('AIN7', int('1000',2)),
+		('AIN8', int('1001',2)),
+		('AIN9', int('1010',2)),
+		('INTEMPSENSE', int('1011',2)), # Internal temperature sensor [positive or negative depending on field]
+		('INTAV4', int('1100',2)), # Internal (AVDD - AVSS)/4 [positive or negative depending on field]
+		('INTDV4', int('1101',2)), # Internal (DVDD/4) [positive or negative depending on field]
+		('ALLOPEN', int('1110',2)), # All inputs open
+		('VCOM', int('1111',2)) # Internal connection to V common
 	])
 	
 	inv_registerAddress = {v: k for k, v in registerAddress.items()}
-	inv_IMUXregister = {v: k for k, v in IMUXregister.items()}
+	inv_INPMUXregister = {v: k for k, v in INPMUXregister.items()}
 	def __init__(self, 
 				bus = 0, 
 				device = 0, 
@@ -141,9 +146,14 @@ class ADC1261:
 			print("DIN:", hex_massage, "- DOUT:",write_check)
 			self.end()
 	
+	def choose_inputs(self, positive, negative = 'VCOM'):
+		input_pins = int(self.INPMUXregister[positive]<<4)+self.INPMUXregister[negative]
+		self.write_register('INPMUX', format(input_pins,'08b'))
+		self.check_inputs()
+	
 	def check_inputs(self):
 		read = self.read_register('INPMUX')
-		print("Input polarity check --- Positive side:", self.inv_IMUXregister[int(format(read,'08b')[:4],2)], "- Negative side:", self.inv_IMUXregister[int(format(read,'08b')[4:],2)])
+		print("Input polarity check --- Positive side:", self.inv_INPMUXregister[int(format(read,'08b')[:4],2)], "- Negative side:", self.inv_INPMUXregister[int(format(read,'08b')[4:],2)])
 	
 	def read_register(self, register_location):
 		hex_message = [self.commandByte1['RREG'][0]+self.registerAddress[register_location],
@@ -231,8 +241,8 @@ def spi_dev_change():
 def main():
 	adc = ADC1261()
 	DeviceID, RevisionID = adc.check_ID()
-	#adc.write_register('INPMUX','01010100')
-	adc.check_inputs()
+	adc.choose_inputs(positive = 'AIN4', negative = 'AIN5')
+	
 	# Set reset/PWDN pin high
 	
 	#while(True):
