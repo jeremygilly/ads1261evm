@@ -3,7 +3,12 @@
 # ADS1261EVM User Guide: www.ti.com/lit/ug/sbau293a/sbau293a.pdf
 # Author: Jeremy Gillbanks
 # First updated: 19 July 2019
-# Last updated: 22 July 2019
+# Last updated: 29 July 2019
+
+# Testing:
+# Keithley 2636B Source Measurement Unit: 1.225900 V
+# ADS1261EVM: 1.248808 V
+# Fluke 73III Multimeter: 1.266 V
 
 # Recommended pin mapping for Raspberry Pi 3 (assuming SPI bus 0, device 0)
 # RPi 3 to ADS1261EVM
@@ -14,7 +19,6 @@
 # GPIO 25 (pin 22) to /RST
 # GPIO 24 (pin 18) to /PWDN
 # GPIO 23 (pin 16) to /DRDY
-
 
 import numpy as np
 import spidev
@@ -58,18 +62,43 @@ class ADC1261:
 		('UNLOCK', [0xF5, "Unlock registers from editing."])
 	])
 	
-	def __init__(self):
-		self.bus = 0
-		self.device = 0
+	IMUXregister = dict([
+		('AIN0', int('0000',2)),
+		('AIN1', int('0001',2)),
+		('AIN2', int('0010',2)),
+		('AIN3', int('0011',2)),
+		('AIN4', int('0100',2)),
+		('AIN5', int('0101',2)),
+		('AIN6', int('0110',2)),
+		('AIN7', int('0111',2)),
+		('AIN8', int('1000',2)),
+		('AIN9', int('1001',2)),
+		('AINCOM', int('1010',2)),
+		('NONE', int('1111',2))
+	])
+	
+	inv_registerAddress = {v: k for k, v in registerAddress.items()}
+	inv_IMUXregister = {v: k for k, v in IMUXregister.items()}
+	def __init__(self, 
+				bus = 0, 
+				device = 0, 
+				rst = 22, 
+				pwdn = 18, 
+				drdy = 16):
 		
 		# Set all pin numbering with board numbering scheme
 		GPIO.setmode(GPIO.BOARD)
-		# GPIO 25 (pin 22) to /RST
-		# GPIO 24 (pin 18) to /PWDN
-		# GPIO 23 (pin 16) to /DRDY
-		self.rst = 22
-		self.pwdn = 18
-		self.drdy = 16
+		
+		self.bus = bus
+		self.device = device
+		
+		# GPIO 25 (pin 22) to /RST (for bus = 0, device = 0)
+		# GPIO 24 (pin 18) to /PWDN (for bus = 0, device = 0)
+		# GPIO 23 (pin 16) to /DRDY (for bus = 0, device = 0)
+		self.rst = rst
+		self.pwdn = pwdn
+		self.drdy = drdy
+		
 		GPIO.setup(self.rst, GPIO.OUT)
 		GPIO.setup(self.pwdn, GPIO.OUT)
 		GPIO.setup(self.drdy, GPIO.IN)
@@ -82,12 +111,70 @@ class ADC1261:
 		self.spi.lsbfirst = False # Appears to be false according to Table 12. Be wary of full-scale and offset calibration registers (need 24-bit for words)
 		self.bits = 24 # This is to do with future conversions (1/2**24) - not an SPI read/write issue.
 		
-		self.Arbitrary = 0 # This is command byte 2 as per Table 16.
+		self.arbitrary = 0 # This is command byte 2 as per Table 16.
 		self.CRC2 = 1 # Change this to 0 to disable Cyclic Redundancy Checks (and 1 to enable) per Table 35: MODE3 Register Field Description.
-		self.Ending = 0 # This is command byte 4 per Table 16.
+		self.zero = 0 # This is command byte 4 per Table 16.
 		
 	# to send a message: bytearray([commandByte1['NOP'][0], self.Arbitrary, self.CRC2, self.Ending])
 	# if reading/writing registers: commandByte1['RREG'][0] + registerAddress['ID']
+	
+	def write_register(self, register_location, register_data):
+		hex_message = [self.commandByte1['WREG'][0]+self.registerAddress[register_location],int(register_data,2)]
+		human_message = [self.commandByte1['WREG'][1],register_data]
+		write_check = self.send(hex_message)
+		
+		if write_check == [255, hex_message[1]]:
+			read = self.read_register(register_location)
+			if read == -1:
+				print("Read back failed. Requires write_register review.")
+				print(read, hex_message)
+			elif read == int(register_data,2):
+				print("Register written successfully.")
+				print("Read register location:", register_location, "Read data:", format(read,'08b'))
+				
+			else:
+				print("Unexplained fail regarding writing to a register :(")
+				print(read, hex_message)
+				self.end()
+		else:
+			print("Error writing register - failed WREG command")
+			print("DIN:", hex_massage, "- DOUT:",write_check)
+			self.end()
+	
+	def check_inputs(self):
+		read = self.read_register('INPMUX')
+		print("Input polarity check --- Positive side:", self.inv_IMUXregister[int(format(read,'08b')[:4],2)], "- Negative side:", self.inv_IMUXregister[int(format(read,'08b')[4:],2)])
+	
+	def read_register(self, register_location):
+		hex_message = [self.commandByte1['RREG'][0]+self.registerAddress[register_location],
+						self.arbitrary, 
+						self.zero]
+		hex_message_check = hex_message
+		human = self.commandByte1['RREG'][1]
+
+		returnedMessage = self.send(hex_message=hex_message)
+		if returnedMessage[0:2] == [255,hex_message_check[1]]:
+			return returnedMessage[2]
+		else:
+			return -1
+		
+	def check_ID(self):
+		hex_checkID = [self.commandByte1['RREG'][0]+self.registerAddress['ID'],
+						self.arbitrary, 
+						self.zero]
+		ID = self.send(hex_checkID)
+		if ID[1] == hex_checkID[1]:
+			ID = bin(ID[2])
+			ID_description = {"1000":"ADS1261 or ADS1261B", "1010":"ADS1260B"} # Table 30 from ADS1261 data sheet
+			print("Device ID:", ID_description[ID[2:6]], "- Revision ID:", ID[6:10])
+			[DeviceID, RevisionID] = ID_description[ID[2:6]], ID[6:10]
+			return DeviceID, RevisionID
+		else:
+			print ("Failed to echo byte 1 during ID check")
+			print ("Register sent:", ID[1], "\nRegister received:", hex_checkID[1])
+			self.end()
+	
+		
 	
 	def gpio(self, command, status):
 		if command.upper() == "RESET" and status.lower() == "high":
@@ -98,26 +185,21 @@ class ADC1261:
 			GPIO.output(self.pwdn, GPIO.HIGH)
 		elif command.upper() == "PWDN" and status.lower() == "low":
 			GPIO.output(self.pwdn, GPIO.LOW)
-		elif command.upper() == "DRDY" and status.lower() == "high":
-			GPIO.output(self.drdy, GPIO.HIGH)
-		elif command.upper() == "DRDY" and status.lower() == "low":
-			GPIO.output(self.drdy, GPIO.LOW)
 		else:
 			print('Invalid gpio(command,status). Please use "RESET", "PWDN", or, "DRDY"; and "high" or "low".') 
 			
-	def send(self, human_message, hex_message):
+	def send(self, hex_message, human_message="None provided"):
 		try:
 			byte_message = hex_message
-			self.spi.xfer2(byte_message)
-			print(human_message, byte_message, hex_message)
-			return 0
+			# for testing: print(human_message, byte_message, hex_message)
+			returnedMessage = self.spi.xfer2(byte_message)
+			return returnedMessage
 		except Exception as e:
 			print ("Message send failure:", human_message)
 			print ("Attempted hex message:", hex_message)
 			print ("Attempted byte message:", byte_message)
 			print(e)
-			self.spi.close()
-			sys.exit()
+			self.end()
 			
 	def convert_to_mV(self, array, reference = 5000, gain = 1):
 		# Only for use without CRC checking!!
@@ -137,11 +219,24 @@ class ADC1261:
 		self.spi.close()
 		sys.exit()
 
+def spi_dev_change():
+	adc = ADC1261()
+	sent_message = [adc.commandByte1['RREG'][0]+adc.registerAddress['ID'],
+						adc.arbitrary, 
+						adc.zero]
+	print("Message to be sent:", sent_message)
+	received = adc.spi.xfer2(sent_message)
+	print("Sent Message after xfer2:", sent_message, "- Received:", received)
+
 def main():
+	adc = ADC1261()
+	DeviceID, RevisionID = adc.check_ID()
+	#adc.write_register('INPMUX','01010100')
+	adc.check_inputs()
 	# Set reset/PWDN pin high
 	
-	while(True):
-		pass	
+	#while(True):
+		#pass	
 		# Send stop command
 		
 		# Write register data
@@ -163,20 +258,12 @@ def getID():
 	adc = ADC1261()
 	adc.gpio(command="RESET",status="high")
 	adc.gpio(command="pwdn", status="high")
-	#adc.send(adc.commandByte1['STOP'][1],adc.commandByte1['STOP'][0])
-	# print('Print test', bin(adc.commandByte1['RREG'][0]), bin(adc.commandByte1['RREG'][0]+0x0))
-	#adc.send(adc.commandByte1['RREG'][1], [adc.commandByte1['RREG'][0]+0x0,adc.Arbitrary,adc.CRC2,adc.Ending])
-	#print(bytearray([adc.commandByte1['RREG'][0]+0x0,adc.Arbitrary,adc.CRC2,adc.Ending]))
-	#adc.send("Figure 78 test", [0x22,0x00,0x01,0x00,0x00,0x00])
-	#adc.spi.xfer2([int(0x22),int(0x00),int(0x01),int(0x00),int(0x00),int(0x00)])
-	#a = [0x22,0x00,0x00,0x00,0x00,0x00]
 	stop = [0x0A,0x00,0x00,0x00]
 	start = [0x08, 0x00, 0x00, 0x00]
 	read = [0x12,0,0,0,0,0,0,0,0]
 	wreg = [0x40+0x11,84,0,0,0,0]
 	rreg = [0x20+0x11,0,0,0,0,0]
-	b = binascii.hexlify(bytearray([0x22,0x00,0x00,0x00,0x00,0x00]))
-	#print("Sent:",a)
+
 	adc.spi.xfer2(stop)
 	adc.spi.xfer2(wreg)
 	r = adc.spi.xfer2(rreg)
@@ -189,7 +276,6 @@ def getID():
 		# if DRDY is high?? then read, else, wait.
 			if GPIO.input(adc.drdy):
 				if not GPIO.input(adc.drdy):
-					#r = adc.spi.xfer2([1,4,1])
 					r = adc.spi.xfer2(read)
 					a = adc.convert_to_mV(r[2:5])
 					print(a)
@@ -198,7 +284,14 @@ def getID():
 	except KeyboardInterrupt:
 		adc.end()
 
+# Potential use cases:
+# determine which pins to use
+# choose frequency
+# averaging??
+# print adc value
+# check for errors
+# date/time stamps
+# CRC on/off
 
 if __name__ == "__main__":
-	getID()
-	# main()
+	main()
