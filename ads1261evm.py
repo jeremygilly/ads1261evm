@@ -82,8 +82,41 @@ class ADC1261:
 		('VCOM', int('1111',2)) # Internal connection to V common
 	])
 	
+	available_data_rates = dict([
+		# Check Table 32 - ADS1261 data sheet
+		(2.5, int('00000',2)),
+		(5, int('00001',2)),
+		(10, int('00010',2)),
+		(16.6, int('00011',2)),
+		(20, int('00100',2)),
+		(50, int('00101',2)),
+		(60, int('00110',2)),
+		(100, int('00111',2)),
+		(400, int('01000',2)),
+		(1200, int('01001',2)),
+		(2400, int('01010',2)),
+		(4800, int('01011',2)), 
+		(7200, int('01100',2)), 
+		(14400, int('01101',2)),
+		(19200, int('01110',2)),
+		(25600, int('01111',2)),
+		(40000,int('10000',2))
+	])
+		
+	available_digital_filters = dict([
+		# Check Table 32 - ADS1261 data sheet
+		('sinc1', int('000',2)),
+		('sinc2', int('001',2)),
+		('sinc3', int('010',2)),
+		('sinc4', int('011',2)),
+		('fir', int('100',2)),
+	])
+	
 	inv_registerAddress = {v: k for k, v in registerAddress.items()}
 	inv_INPMUXregister = {v: k for k, v in INPMUXregister.items()}
+	inv_available_data_rates = {v: k for k, v in available_data_rates.items()}
+	inv_available_digital_filters = {v: k for k, v in available_digital_filters.items()}
+	
 	def __init__(self, 
 				bus = 0, 
 				device = 0, 
@@ -123,6 +156,33 @@ class ADC1261:
 	# to send a message: bytearray([commandByte1['NOP'][0], self.Arbitrary, self.CRC2, self.Ending])
 	# if reading/writing registers: commandByte1['RREG'][0] + registerAddress['ID']
 	
+	def send(self, hex_message, human_message="None provided"):
+		try:
+			byte_message = hex_message
+			returnedMessage = self.spi.xfer2(byte_message)
+			return returnedMessage
+		except Exception as e:
+			print ("Message send failure:", human_message)
+			print ("Attempted hex message:", hex_message)
+			print ("Attempted byte message:", byte_message)
+			print(e)
+			self.end()
+			
+				
+	def read_register(self, register_location):
+		hex_message = [self.commandByte1['RREG'][0]+self.registerAddress[register_location],
+						self.arbitrary, 
+						self.zero]
+		hex_message_check = hex_message
+		human = self.commandByte1['RREG'][1]
+		returnedMessage = self.send(hex_message=hex_message)
+		
+		if returnedMessage[0:2] == [255,hex_message_check[1]]:
+			return returnedMessage[2]
+		else:
+			return -1
+			
+			
 	def write_register(self, register_location, register_data):
 		hex_message = [self.commandByte1['WREG'][0]+self.registerAddress[register_location],int(register_data,2)]
 		human_message = [self.commandByte1['WREG'][1],register_data]
@@ -136,9 +196,8 @@ class ADC1261:
 			elif read == int(register_data,2):
 				print("Register written successfully.")
 				print("Read register location:", register_location, "Read data:", format(read,'08b'))
-				
 			else:
-				print("Unexplained fail regarding writing to a register :(")
+				print("Unexplained fail regarding writing to a register. Read back was unexpected.")
 				print(read, hex_message)
 				self.end()
 		else:
@@ -155,18 +214,16 @@ class ADC1261:
 		read = self.read_register('INPMUX')
 		print("Input polarity check --- Positive side:", self.inv_INPMUXregister[int(format(read,'08b')[:4],2)], "- Negative side:", self.inv_INPMUXregister[int(format(read,'08b')[4:],2)])
 	
-	def read_register(self, register_location):
-		hex_message = [self.commandByte1['RREG'][0]+self.registerAddress[register_location],
-						self.arbitrary, 
-						self.zero]
-		hex_message_check = hex_message
-		human = self.commandByte1['RREG'][1]
-
-		returnedMessage = self.send(hex_message=hex_message)
-		if returnedMessage[0:2] == [255,hex_message_check[1]]:
-			return returnedMessage[2]
-		else:
-			return -1
+	def set_frequency(self, data_rate = 20, digital_filter = 'FIR'):
+		data_rate = int(data_rate) # just to ensure we remove any other data types (e.g. strings)
+		digital_filter = digital_filter.lower() # to ensure dictionary matching
+		rate_filter = int(self.available_data_rates[data_rate]<<3)+int(self.available_digital_filters[digital_filter])
+		self.write_register('MODE0', format(rate_filter,'08b'))
+		self.check_rates()
+		
+	def check_rates(self):
+		read = self.read_register('MODE0')
+		print("Data rate and digital filter --- Data rate:", self.inv_available_data_rates[int(format(read,'08b')[:5],2)], "SPS - Digital Filter:", self.inv_available_digital_filters[int(format(read,'08b')[5:],2)])
 		
 	def check_ID(self):
 		hex_checkID = [self.commandByte1['RREG'][0]+self.registerAddress['ID'],
@@ -197,19 +254,9 @@ class ADC1261:
 			GPIO.output(self.pwdn, GPIO.LOW)
 		else:
 			print('Invalid gpio(command,status). Please use "RESET", "PWDN", or, "DRDY"; and "high" or "low".') 
+	
 			
-	def send(self, hex_message, human_message="None provided"):
-		try:
-			byte_message = hex_message
-			# for testing: print(human_message, byte_message, hex_message)
-			returnedMessage = self.spi.xfer2(byte_message)
-			return returnedMessage
-		except Exception as e:
-			print ("Message send failure:", human_message)
-			print ("Attempted hex message:", hex_message)
-			print ("Attempted byte message:", byte_message)
-			print(e)
-			self.end()
+
 			
 	def convert_to_mV(self, array, reference = 5000, gain = 1):
 		# Only for use without CRC checking!!
@@ -242,9 +289,9 @@ def main():
 	adc = ADC1261()
 	DeviceID, RevisionID = adc.check_ID()
 	adc.choose_inputs(positive = 'AIN4', negative = 'AIN5')
-	
+	adc.set_frequency()
 	# Set reset/PWDN pin high
-	### test!!
+	
 	#while(True):
 		#pass	
 		# Send stop command
@@ -296,7 +343,7 @@ def getID():
 
 # Potential use cases:
 # determine which pins to use (done!)
-# choose frequency 
+# choose frequency - now!
 # averaging??
 # print adc value
 # check for errors (done! for register writes)
