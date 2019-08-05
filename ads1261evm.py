@@ -124,7 +124,7 @@ class ADC1261:
 				pwdn = 18, 
 				drdy = 16):
 		
-		# Set all pin numbering with board numbering scheme
+		# Set all pin numbering with board numbering scheme (GPIO.BOARD vs GPIO.BCM)
 		GPIO.setmode(GPIO.BOARD)
 		
 		self.bus = bus
@@ -219,9 +219,9 @@ class ADC1261:
 		digital_filter = digital_filter.lower() # to ensure dictionary matching
 		rate_filter = int(self.available_data_rates[data_rate]<<3)+int(self.available_digital_filters[digital_filter])
 		self.write_register('MODE0', format(rate_filter,'08b'))
-		self.check_rates()
+		self.check_frequency()
 		
-	def check_rates(self):
+	def check_frequency(self):
 		read = self.read_register('MODE0')
 		print("Data rate and digital filter --- Data rate:", self.inv_available_data_rates[int(format(read,'08b')[:5],2)], "SPS - Digital Filter:", self.inv_available_digital_filters[int(format(read,'08b')[5:],2)])
 		
@@ -274,6 +274,8 @@ class ADC1261:
 	
 	def end(self):
 		self.spi.close()
+		GPIO.cleanup() # Resets all GPIO pins to GPIO.INPUT (prevents GPIO.OUTPUT being left high and short-circuiting).
+		print("SPI closed. GPIO cleaned up. System exited.")
 		sys.exit()
 
 def spi_dev_change():
@@ -309,7 +311,7 @@ def main():
 		
 		# if /DRDY is low, then read data.
 			# else check hardware /DRDY
-
+	adc.end()
 		
 def getID():
 	adc = ADC1261()
@@ -343,7 +345,7 @@ def getID():
 
 # Potential use cases:
 # determine which pins to use (done!)
-# choose frequency - now!
+# choose frequency - (done!)
 # averaging??
 # print adc value
 # check for errors (done! for register writes)
