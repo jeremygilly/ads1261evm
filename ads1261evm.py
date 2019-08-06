@@ -114,10 +114,22 @@ class ADC1261:
 		('fir', int('100',2)),
 	])
 	
+	available_gain = dict([
+		(1, int('000',2)),
+		(2, int('001',2)),
+		(4, int('010',2)),
+		(8, int('011',2)),
+		(16, int('100',2)),
+		(32, int('101',2)),
+		(64, int('110',2)),
+		(128, int('111',2))
+	])
+	
 	inv_registerAddress = {v: k for k, v in registerAddress.items()}
 	inv_INPMUXregister = {v: k for k, v in INPMUXregister.items()}
 	inv_available_data_rates = {v: k for k, v in available_data_rates.items()}
 	inv_available_digital_filters = {v: k for k, v in available_digital_filters.items()}
+	inv_available_gain = {v: k for k, v in available_gain.items()}
 	
 	def __init__(self, 
 					bus = 0, 
@@ -275,8 +287,9 @@ class ADC1261:
 		RESET_status = "No reset" if byte_string[7] == 0 else "Reset"
 		return LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status, byte_string
 		
-	def print_status(self, LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status, byte_string=0):
-		print("\n***Status Register Check:***"
+	def print_status(self):
+		LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status, byte_string = self.check_status()
+		print("\n *** Status Register Check: ***"
 				"\nRegister lock status:", LOCK_status, 
 				"\nCRC Error:", CRCERR_status,
 				"\nPGA Low Alarm:", PGAL_ALM_status,
@@ -318,7 +331,6 @@ class ADC1261:
 				GPIO2 = 0,
 				GPIO1 = 0,
 				GPIO0 = 0):
-
 		send_mode3 = [PWDN, STATENB, CRCENB, SPITIM, GPIO3, GPIO2, GPIO1, GPIO0]
 		send_mode3 = ''.join(map(str,send_mode3))
 		self.write_register('MODE3', send_mode3)
@@ -336,12 +348,11 @@ class ADC1261:
 		GPIO2_status = "Low" if byte_string[5] == 0 else "High"
 		GPIO1_status = "Low" if byte_string[6] == 0 else "High"
 		GPIO0_status = "Low" if byte_string[7] == 0 else "High"
-		
 		return PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status, byte_string
 	
 	def print_mode3(self):
 		PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status, byte_string = self.check_mode3()
-		print("\n***Mode 3 Register Check:***"
+		print("\n *** Mode 3 Register Check:*** "
 				"\nSoftware Power-down mode:", PWDN_status,
 				"\nSTATUS byte:", STATENB_status,
 				"\nCRC Data Verification:", CRCENB_status,
@@ -351,8 +362,26 @@ class ADC1261:
 				"\nGPIO1 Data:", GPIO1_status,
 				"\nGPIO0 Data:", GPIO0_status,
 				"\nRaw check:", byte_string, "\n")
-
-			
+				
+	def PGA(self, BYPASS = 0, GAIN = 1):
+		send_PGA = int(BYPASS<<7)+int(self.available_gain[GAIN])
+		send_PGA = format(send_PGA, '08b')
+		self.write_register('PGA', send_PGA)
+		self.check_PGA()
+		
+	def check_PGA(self):
+		read = self.read_register('PGA')
+		byte_string = list(map(int,format(read,'08b')))
+		BYPASS_status = "PGA mode" if byte_string[0] == 0 else "PGA Bypass"
+		gain = self.inv_available_gain[int(''.join(map(str,byte_string[5:])),2)]
+		return BYPASS_status, gain
+	
+	def print_PGA(self):
+		BYPASS_status, gain = self.check_PGA()
+		print("\n *** PGA Register Check: ***"
+				"\nPGA Bypass Mode:", BYPASS_status,
+				"\nGain:", gain)
+		
 	def convert_to_mV(self, array, reference = 5000, gain = 1):
 		# Only for use without CRC checking!!
 		#use twos complement online to check
@@ -370,7 +399,7 @@ class ADC1261:
 	def end(self):
 		self.spi.close()
 		GPIO.cleanup() # Resets all GPIO pins to GPIO.INPUT (prevents GPIO.OUTPUT being left high and short-circuiting).
-		print("SPI closed. GPIO cleaned up. System exited.")
+		print("\nSPI closed. GPIO cleaned up. System exited.")
 		sys.exit()
 
 def spi_dev_change():
@@ -388,10 +417,10 @@ def main():
 	DeviceID, RevisionID = adc.check_ID()
 	adc.choose_inputs(positive = 'AIN4', negative = 'AIN5')
 	adc.set_frequency()
-	LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status, byte_string = adc.check_status()
-	adc.print_status(LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status, byte_string)
-	adc.mode3()
+	adc.print_status()
 	adc.print_mode3()
+	adc.PGA()
+	adc.print_PGA()
 	# Set reset/PWDN pin high
 	
 	#while(True):
@@ -444,20 +473,20 @@ def getID():
 		adc.end()
 
 # Potential use cases:
-# determine which pins to use (done!)
-# choose frequency - (done!)
-# averaging??
+# averaging?? Maybe outside the module?
 # print adc value
-# check for errors (done! for register writes)
-# date/time stamps
-# CRC on/off (should be a register read/write function)
-# No implementation of GPIO pins (i.e. MODE2 or the relevant MODE3 bits)
-# Need to implement remaining MODE3 settings (STATUS, CRC, etc) (done!)
 # Need to implement calibration (offset & full-scale)
 # Need to enable REF register
-# No implementation of IMUX or IMAG registers
-# Need to implement PGA register
 # Need to implement INPBIAS register
+
+# No implementation of GPIO pins (i.e. MODE2 or the relevant MODE3 bits)
+# No implementation of IMUX or IMAG registers
+
+# (done!) Need to implement remaining MODE3 settings (soft PWDN, STATUS, CRC, etc)
+# (done!) check for write register errors
+# (done!) determine which pins to use 
+# (done!) choose frequency
+# (done!) Need to implement PGA register
 
 if __name__ == "__main__":
 	main()
