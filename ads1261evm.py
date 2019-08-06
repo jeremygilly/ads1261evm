@@ -376,6 +376,7 @@ class ADC1261:
 				"\nRaw check:", byte_string, "\n")
 				
 	def PGA(self, BYPASS = 0, GAIN = 1):
+		# BYPASS can be 0 (PGA mode (default)) or 1 (PGA  bypass).
 		send_PGA = int(BYPASS<<7)+int(self.available_gain[GAIN])
 		send_PGA = format(send_PGA, '08b')
 		self.write_register('PGA', send_PGA)
@@ -419,6 +420,12 @@ class ADC1261:
 				"\nInternal Reference Enable:", ref_enable_status,
 				"\nReference Positive Input:", RMUXP_status,
 				"\nReference Negative Input:", RMUXN_status, "\n")
+				
+	def calibration(self, calibration = "SFOCAL"):
+		# Offset system- (SYOCAL) and full-scale (GANCAL) calibration are not implemented. 
+		# Only offset self-calibration (SFOCAL) is implemented.
+		calibration = [self.commandByte1[calibration][0], self.arbitrary, self.zero]
+		self.send(calibration)
 		
 	def convert_to_mV(self, array, reference = 5000, gain = 1):
 		# Only for use without CRC checking!!
@@ -461,6 +468,7 @@ def main():
 	adc.print_PGA()
 	adc.reference_config()
 	adc.print_reference_config()
+	adc.calibration()
 	# Set reset/PWDN pin high
 	
 	#while(True):
@@ -515,9 +523,8 @@ def getID():
 # Potential use cases:
 # averaging?? Maybe outside the module?
 # print adc value
-# Need to implement calibration (offset & full-scale)
-# Need to implement INPBIAS register
 
+# No implementation of INPBIAS register
 # No implementation of GPIO pins (i.e. MODE2 or the relevant MODE3 bits)
 # No implementation of IMUX or IMAG registers
 
@@ -527,6 +534,7 @@ def getID():
 # (done!) choose frequency
 # (done!) Need to implement PGA register
 # (done!) Need to enable REF register
+# (partially completed!) Need to implement calibration (offset & full-scale)
 
 if __name__ == "__main__":
 	main()
