@@ -125,11 +125,23 @@ class ADC1261:
 		(128, int('111',2))
 	])
 	
+	available_reference = dict([
+		('Internal Positive', int('00',2)<<2),
+		('AVDD', int('01',2)<<2),
+		('AIN0', int('10',2)<<2),
+		('AIN2', int('11',2)<<2),
+		('Internal Negative', int('00',2)),
+		('AVSS', int('01',2)),
+		('AIN1', int('10',2)),
+		('AIN3', int('11',2)),
+	])
+	
 	inv_registerAddress = {v: k for k, v in registerAddress.items()}
 	inv_INPMUXregister = {v: k for k, v in INPMUXregister.items()}
 	inv_available_data_rates = {v: k for k, v in available_data_rates.items()}
 	inv_available_digital_filters = {v: k for k, v in available_digital_filters.items()}
 	inv_available_gain = {v: k for k, v in available_gain.items()}
+	inv_available_reference = {v: k for k, v in available_reference.items()}
 	
 	def __init__(self, 
 					bus = 0, 
@@ -381,6 +393,32 @@ class ADC1261:
 		print("\n *** PGA Register Check: ***"
 				"\nPGA Bypass Mode:", BYPASS_status,
 				"\nGain:", gain)
+
+	def reference_config(self, reference_enable = 0, RMUXP = 'AVDD', RMUXN = 'AVSS'):
+		# Note: Bit shifting not required when referencing dictionary (already happens at the dictionary level).
+		# reference_enable must be 0 (disabled) or 1 (enabled)
+		# RMUXP is the reference positive side, can be "Internal Positive", "AVDD", "AIN0", or "AIN2"
+		# RMUXN is the reference negative side, can be "Internal Negative", "AVSS", "AIN1", or "AIN3"
+		send_ref_config = int(reference_enable<<4) + self.available_reference[RMUXP] + self.available_reference[RMUXN]
+		send_ref_config = format(send_ref_config, '08b')
+		print("\nReference Configuration binary:", send_ref_config)
+		self.write_register('REF', send_ref_config)
+		self.check_reference_config()
+		
+	def check_reference_config(self):
+		read = self.read_register('REF')
+		byte_string = list(map(int,format(read,'08b')))
+		ref_enable_status = "Disabled" if byte_string[3] == 0 else "Enabled"
+		RMUXP_status = self.inv_available_reference[int(''.join(map(str,byte_string[4:6])),2)<<2]
+		RMUXN_status = self.inv_available_reference[int(''.join(map(str,byte_string[6:])),2)]
+		return ref_enable_status, RMUXP_status, RMUXN_status
+	
+	def print_reference_config(self):
+		ref_enable_status, RMUXP_status, RMUXN_status = self.check_reference_config()
+		print("\n *** Reference Configuration Check: ***"
+				"\nInternal Reference Enable:", ref_enable_status,
+				"\nReference Positive Input:", RMUXP_status,
+				"\nReference Negative Input:", RMUXN_status, "\n")
 		
 	def convert_to_mV(self, array, reference = 5000, gain = 1):
 		# Only for use without CRC checking!!
@@ -421,6 +459,8 @@ def main():
 	adc.print_mode3()
 	adc.PGA()
 	adc.print_PGA()
+	adc.reference_config()
+	adc.print_reference_config()
 	# Set reset/PWDN pin high
 	
 	#while(True):
@@ -476,7 +516,6 @@ def getID():
 # averaging?? Maybe outside the module?
 # print adc value
 # Need to implement calibration (offset & full-scale)
-# Need to enable REF register
 # Need to implement INPBIAS register
 
 # No implementation of GPIO pins (i.e. MODE2 or the relevant MODE3 bits)
@@ -487,6 +526,7 @@ def getID():
 # (done!) determine which pins to use 
 # (done!) choose frequency
 # (done!) Need to implement PGA register
+# (done!) Need to enable REF register
 
 if __name__ == "__main__":
 	main()
