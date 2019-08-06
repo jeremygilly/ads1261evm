@@ -122,6 +122,7 @@ class ADC1261:
 	def __init__(self, 
 					bus = 0, 
 					device = 0, 
+					speed = 16000000,
 					rst = 22, 
 					pwdn = 18, 
 					drdy = 16):
@@ -131,7 +132,7 @@ class ADC1261:
 		
 		self.bus = bus
 		self.device = device
-		
+		# GPIO BCM (pin GPIO BOARD)
 		# GPIO 25 (pin 22) to /RST (for bus = 0, device = 0)
 		# GPIO 24 (pin 18) to /PWDN (for bus = 0, device = 0)
 		# GPIO 23 (pin 16) to /DRDY (for bus = 0, device = 0)
@@ -145,7 +146,9 @@ class ADC1261:
 		
 		self.spi = spidev.SpiDev()
 		self.spi.open(self.bus, self.device)
-		self.spi.max_speed_hz = 1000000 # 1 MHz is the minimum external clock speed allowable: 7.3 Recommended Operating Conditions (pg 7).
+		# Max speed function seems to have undocumented limitations in spidev library documents. 
+		# A potential max speed is 16 MHz - see 7.3 Recommended Operating Conditions is between 1 and 10.75 MHz (ADS1261 datasheet).
+		self.spi.max_speed_hz = speed
 		self.spi.mode = 1 # 9.5.1 of ADS1261 datasheet (pg 50)
 		self.spi.bits_per_word = 8 # Datasheet says 24-bit word for some parts. But that word is made of three 8-bit registers.
 		self.spi.lsbfirst = False # Appears to be false according to Table 12. Be wary of full-scale and offset calibration registers (need 24-bit for words)
@@ -265,11 +268,11 @@ class ADC1261:
 		LOCK_status = "Unlocked" if byte_string[0] == 0 else "Locked"
 		CRCERR_status = "No CRC error." if byte_string[1] == 0 else "CRC Error"
 		PGAL_ALM_status = "No alarm" if byte_string[2] == 0 else "Alarm"
-		PGAH_ALM_status = ["No alarm", "Alarm"][byte_string[3] == 1]
-		REFL_ALM_status = ["No alarm", "Alarm"][byte_string[4] == 1]
-		DRDY_status = ["Not new", "New"][byte_string[5] == 1]
-		CLOCK_status = ["Internal", "External"][byte_string[6] == 1]
-		RESET_status = ["No reset", "Reset"][byte_string[7] == 1]
+		PGAH_ALM_status = "No alarm" if byte_string[3] == 0 else "Alarm"
+		REFL_ALM_status = "No alarm" if byte_string[4] == 0 else "Alarm"
+		DRDY_status = "Not new" if byte_string[5] == 0 else "New"
+		CLOCK_status = "Internal" if byte_string[6] == 0 else "External"
+		RESET_status = "No reset" if byte_string[7] == 0 else "Reset"
 		return LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status, byte_string
 		
 	def print_status(self, LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status, byte_string=0):
@@ -306,7 +309,48 @@ class ADC1261:
 		else:
 			print('Invalid gpio(command,status). Please use "RESET", "PWDN", or, "DRDY"; and "high" or "low".') 
 	
-			
+	def mode3(self, 
+				PWDN = 0,
+				STATENB = 0,
+				CRCENB = 0,
+				SPITIM = 0,
+				GPIO3 = 0,
+				GPIO2 = 0,
+				GPIO1 = 0,
+				GPIO0 = 0):
+
+		send_mode3 = [PWDN, STATENB, CRCENB, SPITIM, GPIO3, GPIO2, GPIO1, GPIO0]
+		send_mode3 = ''.join(map(str,send_mode3))
+		self.write_register('MODE3', send_mode3)
+		self.check_mode3()
+		
+	def check_mode3(self):
+		read = self.read_register('MODE3')
+		byte_string = list(map(int,format(read,'08b')))
+		print(byte_string)
+		PWDN_status = "Normal" if byte_string[0] == 0 else "Software Power-Down Mode"
+		STATENB_status = "No Status byte" if byte_string[1] == 0 else "Status byte enabled"
+		CRCENB_status = "No CRC" if byte_string[2] == 0 else "CRC enabled"
+		SPITIM_status = "SPI auto-reset disabled" if byte_string[3] == 0 else "SPI auto-reset enabled"
+		GPIO3_status = "Low" if byte_string[4] == 0 else "High"
+		GPIO2_status = "Low" if byte_string[5] == 0 else "High"
+		GPIO1_status = "Low" if byte_string[6] == 0 else "High"
+		GPIO0_status = "Low" if byte_string[7] == 0 else "High"
+		
+		return PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status, byte_string
+	
+	def print_mode3(self):
+		PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status, byte_string = self.check_mode3()
+		print("\n***Mode 3 Register Check:***"
+				"\nSoftware Power-down mode:", PWDN_status,
+				"\nSTATUS byte:", STATENB_status,
+				"\nCRC Data Verification:", CRCENB_status,
+				"\nSPI Auto-Reset Function:", SPITIM_status,
+				"\nGPIO3 Data:", GPIO3_status,
+				"\nGPIO2 Data:", GPIO2_status,
+				"\nGPIO1 Data:", GPIO1_status,
+				"\nGPIO0 Data:", GPIO0_status,
+				"\nRaw check:", byte_string, "\n")
 
 			
 	def convert_to_mV(self, array, reference = 5000, gain = 1):
@@ -346,6 +390,8 @@ def main():
 	adc.set_frequency()
 	LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status, byte_string = adc.check_status()
 	adc.print_status(LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status, byte_string)
+	adc.mode3()
+	adc.print_mode3()
 	# Set reset/PWDN pin high
 	
 	#while(True):
@@ -357,7 +403,7 @@ def main():
 		# Read register data to confirm.
 		# Print register data.
 		
-		# Wait for internal reference to settle (unknown time constant)
+		# Wait for internal reference to settle (100 ms from power on) - could probably do this as the first operation, not for each conversion
 		
 		# Send start command.
 		
@@ -405,6 +451,13 @@ def getID():
 # check for errors (done! for register writes)
 # date/time stamps
 # CRC on/off (should be a register read/write function)
+# No implementation of GPIO pins (i.e. MODE2 or the relevant MODE3 bits)
+# Need to implement remaining MODE3 settings (STATUS, CRC, etc) (done!)
+# Need to implement calibration (offset & full-scale)
+# Need to enable REF register
+# No implementation of IMUX or IMAG registers
+# Need to implement PGA register
+# Need to implement INPBIAS register
 
 if __name__ == "__main__":
 	main()
