@@ -1,9 +1,11 @@
-# Collect data from ADS1261EVM and print result.
+# Project: Collect data from ADS1261EVM and print result.
+
 # ADS1261 Data Sheet: www.ti.com/lit/ds/symlink/ads1261.pdf
 # ADS1261EVM User Guide: www.ti.com/lit/ug/sbau293a/sbau293a.pdf
+
 # Author: Jeremy Gillbanks
 # First updated: 19 July 2019
-# Last updated: 29 July 2019
+# Last updated: 05 August 2019
 
 # Testing:
 # Keithley 2636B Source Measurement Unit: 1.225900 V
@@ -20,12 +22,12 @@
 # GPIO 24 (pin 18) to /PWDN
 # GPIO 23 (pin 16) to /DRDY
 
-import numpy as np
+# import numpy as np
 import spidev
 import sys
-import time
+# import time
 import RPi.GPIO as GPIO
-import binascii
+# import binascii
 
 
 class ADC1261:
@@ -118,11 +120,11 @@ class ADC1261:
 	inv_available_digital_filters = {v: k for k, v in available_digital_filters.items()}
 	
 	def __init__(self, 
-				bus = 0, 
-				device = 0, 
-				rst = 22, 
-				pwdn = 18, 
-				drdy = 16):
+					bus = 0, 
+					device = 0, 
+					rst = 22, 
+					pwdn = 18, 
+					drdy = 16):
 		
 		# Set all pin numbering with board numbering scheme (GPIO.BOARD vs GPIO.BCM)
 		GPIO.setmode(GPIO.BOARD)
@@ -150,7 +152,7 @@ class ADC1261:
 		self.bits = 24 # This is to do with future conversions (1/2**24) - not an SPI read/write issue.
 		
 		self.arbitrary = 0 # This is command byte 2 as per Table 16.
-		self.CRC2 = 1 # Change this to 0 to disable Cyclic Redundancy Checks (and 1 to enable) per Table 35: MODE3 Register Field Description.
+		self.CRC2 = 1 # Change this to 0 to tell the register if Cyclic Redundancy Checks are disabled (and 1 to enable) per Table 35: MODE3 Register Field Description.
 		self.zero = 0 # This is command byte 4 per Table 16.
 		
 	# to send a message: bytearray([commandByte1['NOP'][0], self.Arbitrary, self.CRC2, self.Ending])
@@ -170,6 +172,7 @@ class ADC1261:
 			
 				
 	def read_register(self, register_location):
+		register_location = register_location.upper()
 		hex_message = [self.commandByte1['RREG'][0]+self.registerAddress[register_location],
 						self.arbitrary, 
 						self.zero]
@@ -184,6 +187,12 @@ class ADC1261:
 			
 			
 	def write_register(self, register_location, register_data):
+		# expects to see register_location as a human readable string
+		register_location = register_location.upper()
+		# expects to see register_data as a binary string
+		if not isinstance(register_data,str):
+			register_data = format(register_data,'08b')
+		
 		hex_message = [self.commandByte1['WREG'][0]+self.registerAddress[register_location],int(register_data,2)]
 		human_message = [self.commandByte1['WREG'][1],register_data]
 		write_check = self.send(hex_message)
@@ -196,9 +205,11 @@ class ADC1261:
 			elif read == int(register_data,2):
 				print("Register written successfully.")
 				print("Read register location:", register_location, "Read data:", format(read,'08b'))
+			elif register_location.upper() == 'STATUS':
+				pass
 			else:
 				print("Unexplained fail regarding writing to a register. Read back was unexpected.")
-				print(read, hex_message)
+				print("Register Location:", register_location, "- Read back:", read, "- Written/sent back:", write_check, "- Data sent:", int(register_data,2))
 				self.end()
 		else:
 			print("Error writing register - failed WREG command")
@@ -240,9 +251,49 @@ class ADC1261:
 			print ("Failed to echo byte 1 during ID check")
 			print ("Register sent:", ID[1], "\nRegister received:", hex_checkID[1])
 			self.end()
-	
+			
+	def set_status(self, CRCERR = 0, RESET = 1):
+		send_status = 0
+		CRCERR = CRCERR<<6
+		send_status = send_status + CRCERR + RESET
+		self.write_register('STATUS', format(send_status,'08b'))
+		self.check_status()
 		
-	
+	def check_status(self):
+		read = self.read_register('STATUS')
+		byte_string = list(map(int,format(read,'08b')))
+		LOCK_status = "Unlocked" if byte_string[0] == 0 else "Locked"
+		CRCERR_status = "No CRC error." if byte_string[1] == 0 else "CRC Error"
+		PGAL_ALM_status = "No alarm" if byte_string[2] == 0 else "Alarm"
+		PGAH_ALM_status = ["No alarm", "Alarm"][byte_string[3] == 1]
+		REFL_ALM_status = ["No alarm", "Alarm"][byte_string[4] == 1]
+		DRDY_status = ["Not new", "New"][byte_string[5] == 1]
+		CLOCK_status = ["Internal", "External"][byte_string[6] == 1]
+		RESET_status = ["No reset", "Reset"][byte_string[7] == 1]
+		return LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status, byte_string
+		
+	def print_status(self, LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status, byte_string=0):
+		print("\n***Status Register Check:***"
+				"\nRegister lock status:", LOCK_status, 
+				"\nCRC Error:", CRCERR_status,
+				"\nPGA Low Alarm:", PGAL_ALM_status,
+				"\nPGA High Alarm:", PGAH_ALM_status,
+				"\nReference Low Alarm:", REFL_ALM_status,
+				"\nData ready:", DRDY_status,
+				"\nClock:", CLOCK_status,
+				"\nReset:", RESET_status,
+				"\nRaw check:", byte_string, "\n")
+		
+	def collect_measurements(self):
+		pass
+		
+	def check_noise(self):
+		# create range from [1 SPS to 40,000 SPS]
+		# create range from [1, 10, 100, 1000, 10000, 100000] but remove those where x/SPS > 120 sec
+		# collect data in an array, then average, create Fourier transform (frequency analysis), and standard deviation
+		# plot result, showing downward trend for standard deviation as frequency and number of samples increase
+		pass
+		
 	def gpio(self, command, status):
 		if command.upper() == "RESET" and status.lower() == "high":
 			GPIO.output(self.rst, GPIO.HIGH)
@@ -279,6 +330,7 @@ class ADC1261:
 		sys.exit()
 
 def spi_dev_change():
+	# why is this happening? A test case.
 	adc = ADC1261()
 	sent_message = [adc.commandByte1['RREG'][0]+adc.registerAddress['ID'],
 						adc.arbitrary, 
@@ -292,6 +344,8 @@ def main():
 	DeviceID, RevisionID = adc.check_ID()
 	adc.choose_inputs(positive = 'AIN4', negative = 'AIN5')
 	adc.set_frequency()
+	LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status, byte_string = adc.check_status()
+	adc.print_status(LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status, byte_string)
 	# Set reset/PWDN pin high
 	
 	#while(True):
