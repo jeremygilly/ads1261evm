@@ -22,10 +22,27 @@
 # GPIO 24 (pin 18) to /PWDN
 # GPIO 23 (pin 16) to /DRDY
 
+# Potential Functions:
+# averaging?? Maybe outside the module?
+# print adc value
+
+# No implementation of INPBIAS register
+# No implementation of GPIO pins (i.e. MODE2 or the relevant MODE3 bits)
+# No implementation of IMUX or IMAG registers
+# No implementation of user offset calibration.
+
+# (done!) Need to implement remaining MODE3 settings (soft PWDN, STATUS, CRC, etc)
+# (done!) check for write register errors
+# (done!) determine which pins to use 
+# (done!) choose frequency
+# (done!) Need to implement PGA register
+# (done!) Need to enable REF register
+# (done!) Need to implement calibration (offset & full-scale)
+
 # import numpy as np
 import spidev
 import sys
-# import time
+import time
 import RPi.GPIO as GPIO
 # import binascii
 
@@ -149,7 +166,8 @@ class ADC1261:
 					speed = 16000000,
 					rst = 22, 
 					pwdn = 18, 
-					drdy = 16):
+					drdy = 16,
+					start = 10):
 		
 		# Set all pin numbering with board numbering scheme (GPIO.BOARD vs GPIO.BCM)
 		GPIO.setmode(GPIO.BOARD)
@@ -160,12 +178,15 @@ class ADC1261:
 		# GPIO 25 (pin 22) to /RST (for bus = 0, device = 0)
 		# GPIO 24 (pin 18) to /PWDN (for bus = 0, device = 0)
 		# GPIO 23 (pin 16) to /DRDY (for bus = 0, device = 0)
+		# GPIO 15 (pin 10) to STR (for bus = 0, device = 0)
 		self.rst = rst
 		self.pwdn = pwdn
 		self.drdy = drdy
+		self.start = start
 		
 		GPIO.setup(self.rst, GPIO.OUT)
 		GPIO.setup(self.pwdn, GPIO.OUT)
+		GPIO.setup(self.start, GPIO.OUT)
 		GPIO.setup(self.drdy, GPIO.IN)
 		
 		self.spi = spidev.SpiDev()
@@ -183,7 +204,6 @@ class ADC1261:
 		self.zero = 0 # This is command byte 4 per Table 16.
 		
 	# to send a message: bytearray([commandByte1['NOP'][0], self.Arbitrary, self.CRC2, self.Ending])
-	# if reading/writing registers: commandByte1['RREG'][0] + registerAddress['ID']
 	
 	def send(self, hex_message, human_message="None provided"):
 		try:
@@ -297,10 +317,10 @@ class ADC1261:
 		DRDY_status = "Not new" if byte_string[5] == 0 else "New"
 		CLOCK_status = "Internal" if byte_string[6] == 0 else "External"
 		RESET_status = "No reset" if byte_string[7] == 0 else "Reset"
-		return LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status, byte_string
+		return LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status
 		
 	def print_status(self):
-		LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status, byte_string = self.check_status()
+		LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status = self.check_status()
 		print("\n *** Status Register Check: ***"
 				"\nRegister lock status:", LOCK_status, 
 				"\nCRC Error:", CRCERR_status,
@@ -312,16 +332,6 @@ class ADC1261:
 				"\nReset:", RESET_status,
 				"\nRaw check:", byte_string, "\n")
 		
-	def collect_measurements(self):
-		pass
-		
-	def check_noise(self):
-		# create range from [1 SPS to 40,000 SPS]
-		# create range from [1, 10, 100, 1000, 10000, 100000] but remove those where x/SPS > 120 sec
-		# collect data in an array, then average, create Fourier transform (frequency analysis), and standard deviation
-		# plot result, showing downward trend for standard deviation as frequency and number of samples increase
-		pass
-		
 	def gpio(self, command, status):
 		if command.upper() == "RESET" and status.lower() == "high":
 			GPIO.output(self.rst, GPIO.HIGH)
@@ -331,8 +341,12 @@ class ADC1261:
 			GPIO.output(self.pwdn, GPIO.HIGH)
 		elif command.upper() == "PWDN" and status.lower() == "low":
 			GPIO.output(self.pwdn, GPIO.LOW)
+		elif command.upper() == "START" and status.lower() == "high":
+			GPIO.output(self.start, GPIO.HIGH)
+		elif command.upper() == "START" and status.lower() == "low":
+			GPIO.output(self.start, GPIO.LOW)
 		else:
-			print('Invalid gpio(command,status). Please use "RESET", "PWDN", or, "DRDY"; and "high" or "low".') 
+			print('Invalid gpio(command,status). Please use "RESET", "PWDN", or, "START"; and "high" or "low".') 
 	
 	def mode3(self, 
 				PWDN = 0,
@@ -422,12 +436,70 @@ class ADC1261:
 				"\nReference Negative Input:", RMUXN_status, "\n")
 				
 	def calibration(self, calibration = "SFOCAL"):
-		# Offset system- (SYOCAL) and full-scale (GANCAL) calibration are not implemented. 
-		# Only offset self-calibration (SFOCAL) is implemented.
+		# User offset calibration not implemented.
 		calibration = [self.commandByte1[calibration][0], self.arbitrary, self.zero]
 		self.send(calibration)
 		
-	def convert_to_mV(self, array, reference = 5000, gain = 1):
+	def setup_measurements(self):
+		#~ Based on Figure 101 in ADS1261 data sheet
+		#~ Set reset and PWDN pins high
+		self.gpio(command="RESET",status="high")
+		self.gpio(command="pwdn", status="high")
+		#~ Detect external clock
+		#~ Check DRDY pin (if high, continue; if not, wait)
+		flag = 0
+		while flag == 0:
+			if GPIO.input(self.drdy):
+				self.gpio("START","low") # stops the ADC from taking measurements
+				flag = 1
+				return 0
+			else:
+				pass
+	
+	def stop(self):
+		stop_message = [self.commandByte1['STOP'][0], self.arbitrary, self.zero]
+		self.send(stop_message)	
+			
+	def collecting_measurements(self):	
+		#~ Based on Figure 101 in ADS1261 data sheet
+		start_message = [self.commandByte1['START'][0], self.arbitrary, self.zero]
+		self.send(start_message)
+		DRDY_status = 'none'
+		i = 0
+		rdata = [self.commandByte1['RDATA'][0],0,0,0,0,0,0]
+		while DRDY_status.lower() != 'new':
+			if i > 1000: self.end()
+			try:
+				LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status = self.check_status()
+				if DRDY_status.lower() == 'new':
+					read = self.send(rdata)
+					response = self.convert_to_mV(read[2:5], reference = 5000)
+					return response
+			except KeyboardInterrupt:
+				self.end()
+			except: 
+				time.sleep(0.1)
+				i = i + 1
+				pass
+		
+	def check_noise(self):
+		# create range from [1 SPS to 40,000 SPS]
+		sample_rates = [2.5,5,10,16.6,20,50,60,100,400,1200,2400,4800,7200,14400,19200,25600,40000]
+		# create range from [1, 10, 100, 1000, 10000, 100000] but remove those where x/SPS > 120 sec
+		samples = [1,10,100,1000,10000,100000,1000000]
+		array = []
+		for rate in sample_rates:
+			for sample in samples:
+				if sample/rate > 120:
+					pass
+				else:
+					array[rate][sample] = collecting_measurements() # this is wrong!
+		# collect data in an array, then average, create Fourier transform (frequency analysis), and standard deviation
+		# plot result, showing downward trend for standard deviation as frequency and number of samples increase
+		pass
+		
+	def convert_to_mV(self, array, reference = 5000):
+		BYPASS_status, gain = self.check_PGA()
 		# Only for use without CRC checking!!
 		#use twos complement online to check
 		MSB = array[0]
@@ -442,11 +514,47 @@ class ADC1261:
 		return mV
 	
 	def end(self):
+		self.stop()
 		self.spi.close()
 		GPIO.cleanup() # Resets all GPIO pins to GPIO.INPUT (prevents GPIO.OUTPUT being left high and short-circuiting).
 		print("\nSPI closed. GPIO cleaned up. System exited.")
 		sys.exit()
 
+def main():
+	adc = ADC1261()
+	
+	# Internal voltage reference takes 100 ms to settle to within 0.001% of final value after power-on.
+	# 7.5 Electrical Characteristics, ADS1261 data sheet.
+	time.sleep(0.1) 
+	
+	#~ DeviceID, RevisionID = adc.check_ID()
+	adc.choose_inputs(positive = 'AIN3', negative = 'AIN4')
+	adc.set_frequency()
+	#~ adc.print_status()
+	#~ adc.print_mode3()
+	#~ adc.PGA()
+	#~ adc.print_PGA()
+	#~ adc.reference_config()
+	#~ adc.print_reference_config()
+	#~ adc.calibration()
+	
+	# take a measurement
+	adc.setup_measurements()
+	while(True):
+		try:
+			response = adc.collecting_measurements()
+			print(response)
+			time.sleep(1)
+		except KeyboardInterrupt:
+			adc.end()
+		except:
+			print(e)
+			adc.end()
+			
+
+if __name__ == "__main__":
+	main()
+	
 def spi_dev_change():
 	# why is this happening? A test case.
 	adc = ADC1261()
@@ -456,85 +564,3 @@ def spi_dev_change():
 	print("Message to be sent:", sent_message)
 	received = adc.spi.xfer2(sent_message)
 	print("Sent Message after xfer2:", sent_message, "- Received:", received)
-
-def main():
-	adc = ADC1261()
-	DeviceID, RevisionID = adc.check_ID()
-	adc.choose_inputs(positive = 'AIN4', negative = 'AIN5')
-	adc.set_frequency()
-	adc.print_status()
-	adc.print_mode3()
-	adc.PGA()
-	adc.print_PGA()
-	adc.reference_config()
-	adc.print_reference_config()
-	adc.calibration()
-	# Set reset/PWDN pin high
-	
-	#while(True):
-		#pass	
-		# Send stop command
-		
-		# Write register data
-		
-		# Read register data to confirm.
-		# Print register data.
-		
-		# Wait for internal reference to settle (100 ms from power on) - could probably do this as the first operation, not for each conversion
-		
-		# Send start command.
-		
-		# Check if hardware /DRDY
-		
-		# if /DRDY is low, then read data.
-			# else check hardware /DRDY
-	adc.end()
-		
-def getID():
-	adc = ADC1261()
-	adc.gpio(command="RESET",status="high")
-	adc.gpio(command="pwdn", status="high")
-	stop = [0x0A,0x00,0x00,0x00]
-	start = [0x08, 0x00, 0x00, 0x00]
-	read = [0x12,0,0,0,0,0,0,0,0]
-	wreg = [0x40+0x11,84,0,0,0,0]
-	rreg = [0x20+0x11,0,0,0,0,0]
-
-	adc.spi.xfer2(stop)
-	adc.spi.xfer2(wreg)
-	r = adc.spi.xfer2(rreg)
-	print ("RREG:",r)
-	print("Reference:",adc.spi.xfer2([0x20+0x06,0,0]))
-	print("Gain:", adc.spi.xfer2([0x20+0x10,0,0]))
-	adc.spi.xfer2(start)
-	try:
-		while(True):
-		# if DRDY is high?? then read, else, wait.
-			if GPIO.input(adc.drdy):
-				if not GPIO.input(adc.drdy):
-					r = adc.spi.xfer2(read)
-					a = adc.convert_to_mV(r[2:5])
-					print(a)
-					adc.end()
-				
-	except KeyboardInterrupt:
-		adc.end()
-
-# Potential use cases:
-# averaging?? Maybe outside the module?
-# print adc value
-
-# No implementation of INPBIAS register
-# No implementation of GPIO pins (i.e. MODE2 or the relevant MODE3 bits)
-# No implementation of IMUX or IMAG registers
-
-# (done!) Need to implement remaining MODE3 settings (soft PWDN, STATUS, CRC, etc)
-# (done!) check for write register errors
-# (done!) determine which pins to use 
-# (done!) choose frequency
-# (done!) Need to implement PGA register
-# (done!) Need to enable REF register
-# (partially completed!) Need to implement calibration (offset & full-scale)
-
-if __name__ == "__main__":
-	main()
