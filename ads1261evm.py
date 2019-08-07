@@ -39,7 +39,7 @@
 # (done!) Need to enable REF register
 # (done!) Need to implement calibration (offset & full-scale)
 
-# import numpy as np
+import numpy as np
 import spidev
 import sys
 import time
@@ -103,10 +103,10 @@ class ADC1261:
 	
 	available_data_rates = dict([
 		# Check Table 32 - ADS1261 data sheet
-		(2.5, int('00000',2)),
+		(float(2.5), int('00000',2)),
 		(5, int('00001',2)),
 		(10, int('00010',2)),
-		(16.6, int('00011',2)),
+		(float(16.6), int('00011',2)),
 		(20, int('00100',2)),
 		(50, int('00101',2)),
 		(60, int('00110',2)),
@@ -250,8 +250,9 @@ class ADC1261:
 				print("Read back failed. Requires write_register review.")
 				print(read, hex_message)
 			elif read == int(register_data,2):
-				print("Register written successfully.")
-				print("Read register location:", register_location, "Read data:", format(read,'08b'))
+				#~ print("Register written successfully.")
+				#~ print("Read register location:", register_location, "Read data:", format(read,'08b'))
+				pass
 			elif register_location.upper() == 'STATUS':
 				pass
 			else:
@@ -273,7 +274,7 @@ class ADC1261:
 		print("Input polarity check --- Positive side:", self.inv_INPMUXregister[int(format(read,'08b')[:4],2)], "- Negative side:", self.inv_INPMUXregister[int(format(read,'08b')[4:],2)])
 	
 	def set_frequency(self, data_rate = 20, digital_filter = 'FIR'):
-		data_rate = int(data_rate) # just to ensure we remove any other data types (e.g. strings)
+		data_rate = float(data_rate) # just to ensure we remove any other data types (e.g. strings)
 		digital_filter = digital_filter.lower() # to ensure dictionary matching
 		rate_filter = int(self.available_data_rates[data_rate]<<3)+int(self.available_digital_filters[digital_filter])
 		self.write_register('MODE0', format(rate_filter,'08b'))
@@ -329,8 +330,7 @@ class ADC1261:
 				"\nReference Low Alarm:", REFL_ALM_status,
 				"\nData ready:", DRDY_status,
 				"\nClock:", CLOCK_status,
-				"\nReset:", RESET_status,
-				"\nRaw check:", byte_string, "\n")
+				"\nReset:", RESET_status)
 		
 	def gpio(self, command, status):
 		if command.upper() == "RESET" and status.lower() == "high":
@@ -365,7 +365,6 @@ class ADC1261:
 	def check_mode3(self):
 		read = self.read_register('MODE3')
 		byte_string = list(map(int,format(read,'08b')))
-		print(byte_string)
 		PWDN_status = "Normal" if byte_string[0] == 0 else "Software Power-Down Mode"
 		STATENB_status = "No Status byte" if byte_string[1] == 0 else "Status byte enabled"
 		CRCENB_status = "No CRC" if byte_string[2] == 0 else "CRC enabled"
@@ -374,10 +373,10 @@ class ADC1261:
 		GPIO2_status = "Low" if byte_string[5] == 0 else "High"
 		GPIO1_status = "Low" if byte_string[6] == 0 else "High"
 		GPIO0_status = "Low" if byte_string[7] == 0 else "High"
-		return PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status, byte_string
+		return PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status
 	
 	def print_mode3(self):
-		PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status, byte_string = self.check_mode3()
+		PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status = self.check_mode3()
 		print("\n *** Mode 3 Register Check:*** "
 				"\nSoftware Power-down mode:", PWDN_status,
 				"\nSTATUS byte:", STATENB_status,
@@ -386,8 +385,7 @@ class ADC1261:
 				"\nGPIO3 Data:", GPIO3_status,
 				"\nGPIO2 Data:", GPIO2_status,
 				"\nGPIO1 Data:", GPIO1_status,
-				"\nGPIO0 Data:", GPIO0_status,
-				"\nRaw check:", byte_string, "\n")
+				"\nGPIO0 Data:", GPIO0_status)
 				
 	def PGA(self, BYPASS = 0, GAIN = 1):
 		# BYPASS can be 0 (PGA mode (default)) or 1 (PGA  bypass).
@@ -416,7 +414,6 @@ class ADC1261:
 		# RMUXN is the reference negative side, can be "Internal Negative", "AVSS", "AIN1", or "AIN3"
 		send_ref_config = int(reference_enable<<4) + self.available_reference[RMUXP] + self.available_reference[RMUXN]
 		send_ref_config = format(send_ref_config, '08b')
-		print("\nReference Configuration binary:", send_ref_config)
 		self.write_register('REF', send_ref_config)
 		self.check_reference_config()
 		
@@ -458,12 +455,16 @@ class ADC1261:
 	
 	def stop(self):
 		stop_message = [self.commandByte1['STOP'][0], self.arbitrary, self.zero]
-		self.send(stop_message)	
-			
-	def collecting_measurements(self):	
-		#~ Based on Figure 101 in ADS1261 data sheet
+		self.send(stop_message)
+		return 0
+		
+	def start1(self):
 		start_message = [self.commandByte1['START'][0], self.arbitrary, self.zero]
 		self.send(start_message)
+		return 0
+	
+	def collecting_measurements(self):	
+		#~ Based on Figure 101 in ADS1261 data sheet
 		DRDY_status = 'none'
 		i = 0
 		rdata = [self.commandByte1['RDATA'][0],0,0,0,0,0,0]
@@ -473,30 +474,82 @@ class ADC1261:
 				LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status = self.check_status()
 				if DRDY_status.lower() == 'new':
 					read = self.send(rdata)
+					#~ read = self.spi.xfer2([0x12,0,0,0,0,0,0])
 					response = self.convert_to_mV(read[2:5], reference = 5000)
 					return response
 			except KeyboardInterrupt:
 				self.end()
 			except: 
-				time.sleep(0.1)
-				i = i + 1
+				print("Wow! No new conversion??")
+				i+=1
 				pass
 		
 	def check_noise(self):
+		self.setup_measurements()
+		self.start1()
+		import pandas as pd
+		print("Check noise begin...")
 		# create range from [1 SPS to 40,000 SPS]
 		sample_rates = [2.5,5,10,16.6,20,50,60,100,400,1200,2400,4800,7200,14400,19200,25600,40000]
 		# create range from [1, 10, 100, 1000, 10000, 100000] but remove those where x/SPS > 120 sec
-		samples = [1,10,100,1000,10000,100000,1000000]
-		array = []
+		#~ samples = [1,10,100,1000,10000,100000,1000000]
+		samples = [1,10,100]
+		noise = {} # creates a dictionary
 		for rate in sample_rates:
+			rate = str(rate)
+			self.set_frequency(data_rate = rate, digital_filter = 'FIR')
+			print("Sampling at", rate,"now...")
+			noise[rate] = {}
 			for sample in samples:
-				if sample/rate > 120:
+				sample = str(sample)
+				noise[rate][sample] = []
+				if float(sample)/float(rate) > 120:
 					pass
 				else:
-					array[rate][sample] = collecting_measurements() # this is wrong!
+					print("No. samples:", sample)
+					i = 0 
+					time_start = time.time()
+					while(i<int(sample)):
+						if time.time() - time_start > 10:
+							print("Rate:", rate, "Samples to collect:", sample, "Samples so far:", i)
+							time_start = time.time()
+						else:
+							pass
+						response = self.collecting_measurements()
+						noise[str(rate)][str(sample)] = np.append(noise[str(rate)][str(sample)],response)
+						i+=1
+		import csv
+		csvfile = "/home/pi/Documents/ads1261evm/noise.csv"
+		try:
+			with open(csv_file, 'w') as csvfile:
+				writer = csv.DictWriter(csvfile)
+				writer.writeheader()
+				for data in noise:
+					writer.writerow(data)
+		except IOError:
+			print("Unable to save to csv")
 		# collect data in an array, then average, create Fourier transform (frequency analysis), and standard deviation
 		# plot result, showing downward trend for standard deviation as frequency and number of samples increase
-		pass
+		return noise
+		
+	def check_actual_sample_rate(self, rate = 1200, duration = 10):
+		# check how many samples are received at rate after duration seconds. [rate is in SPS, duration is in seconds].
+		self.setup_measurements()
+		i = 0
+		samples = []
+		self.set_frequency(data_rate = rate)
+		self.start1()
+		duration = float(duration)
+		time_start = float(time.time())
+		while float(time.time()) - time_start < duration:
+			response = self.collecting_measurements()
+			samples = np.append(samples, response)
+		time_finish = time.time()
+		actual = float(np.size(samples))/float(duration)
+		print("Desired sample rate:", rate, "SPS")
+		print("Actual sample rate:", actual, "SPS")
+		print("Sampling duration:", duration, " Samples:", np.size(samples))
+		
 		
 	def convert_to_mV(self, array, reference = 5000):
 		BYPASS_status, gain = self.check_PGA()
@@ -530,27 +583,28 @@ def main():
 	#~ DeviceID, RevisionID = adc.check_ID()
 	adc.choose_inputs(positive = 'AIN3', negative = 'AIN4')
 	adc.set_frequency()
-	#~ adc.print_status()
-	#~ adc.print_mode3()
-	#~ adc.PGA()
-	#~ adc.print_PGA()
-	#~ adc.reference_config()
-	#~ adc.print_reference_config()
-	#~ adc.calibration()
-	
+	adc.print_status()
+	adc.print_mode3()
+	adc.PGA()
+	adc.print_PGA()
+	adc.reference_config()
+	adc.print_reference_config()
+	adc.calibration()
+	#~ adc.check_actual_sample_rate(rate = 19200, duration = 10)
 	# take a measurement
-	adc.setup_measurements()
-	while(True):
-		try:
-			response = adc.collecting_measurements()
-			print(response)
-			time.sleep(1)
-		except KeyboardInterrupt:
-			adc.end()
-		except:
-			print(e)
-			adc.end()
-			
+	#~ print("Set up measurement:", adc.setup_measurements())
+	adc.check_noise()
+	#~ while(True):
+		#~ try:
+			#~ response = adc.collecting_measurements()
+			#~ print("Response:", response)
+			#~ time.sleep(1)
+		#~ except KeyboardInterrupt:
+			#~ adc.end()
+		#~ except:
+			#~ print(e)
+			#~ adc.end()
+	adc.end()		
 
 if __name__ == "__main__":
 	main()
