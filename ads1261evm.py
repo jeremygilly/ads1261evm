@@ -45,7 +45,9 @@ import sys
 import time
 import RPi.GPIO as GPIO
 # import binascii
-
+from operator import itemgetter, attrgetter
+import csv
+import pandas as pd
 
 class ADC1261:
 	
@@ -487,19 +489,20 @@ class ADC1261:
 	def check_noise(self):
 		self.setup_measurements()
 		self.start1()
-		import pandas as pd
 		print("Check noise begin...")
 		# create range from [1 SPS to 40,000 SPS]
 		sample_rates = [2.5,5,10,16.6,20,50,60,100,400,1200,2400,4800,7200,14400,19200,25600,40000]
 		# create range from [1, 10, 100, 1000, 10000, 100000] but remove those where x/SPS > 120 sec
 		#~ samples = [1,10,100,1000,10000,100000,1000000]
-		samples = [1,10,100]
+		samples = [1,10]
 		noise = {} # creates a dictionary
 		for rate in sample_rates:
+			self.stop()
 			rate = str(rate)
 			self.set_frequency(data_rate = rate, digital_filter = 'FIR')
-			print("Sampling at", rate,"now...")
+			print("Sampling at", rate,"SPS now...")
 			noise[rate] = {}
+			self.start1()
 			for sample in samples:
 				sample = str(sample)
 				noise[rate][sample] = []
@@ -511,26 +514,76 @@ class ADC1261:
 					time_start = time.time()
 					while(i<int(sample)):
 						if time.time() - time_start > 10:
-							print("Rate:", rate, "Samples to collect:", sample, "Samples so far:", i)
+							print("Rate:", rate, ", Samples to collect:", sample, ", Samples so far:", i)
 							time_start = time.time()
 						else:
 							pass
 						response = self.collecting_measurements()
 						noise[str(rate)][str(sample)] = np.append(noise[str(rate)][str(sample)],response)
 						i+=1
-		import csv
-		csvfile = "/home/pi/Documents/ads1261evm/noise.csv"
+		print("Noise:",noise)
+
+		csv_file = "/home/pi/Documents/ads1261evm/noise.csv"
+		fieldnames = ['Rate (SPS)', 'No. of Samples', 'Response (mV)']
 		try:
 			with open(csv_file, 'w') as csvfile:
-				writer = csv.DictWriter(csvfile)
+				writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 				writer.writeheader()
-				for data in noise:
-					writer.writerow(data)
+				for rate in noise:
+					for sample in noise[rate]:
+						for response in noise[rate][sample]:
+							writer.writerow({
+											fieldnames[0]:float(rate),
+											fieldnames[1]:float(sample),
+											fieldnames[2]:float(response)})
+			print("CSV File successfully written")
 		except IOError:
 			print("Unable to save to csv")
-		# collect data in an array, then average, create Fourier transform (frequency analysis), and standard deviation
-		# plot result, showing downward trend for standard deviation as frequency and number of samples increase
+		# order the csv
+		try:
+			with open(csv_file) as csvfile:
+				next(csvfile)
+				reader = csv.reader(csvfile, delimiter=",", quoting=csv.QUOTE_NONNUMERIC)
+				sortedList = sorted(reader, key=itemgetter(0,1))
+			with open(csv_file, 'w') as csvfile:
+				writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+				writer.writeheader()
+				for row in sortedList:
+					writer.writerow({fieldnames[0]:row[0], fieldnames[1]:row[1], fieldnames[2]:row[2]})
+		except IOError:
+			print("Unable to sort csv")		
+			print(e)
+		except KeyError:
+			print(KeyError, "Sad")
 		return noise
+		
+	def analyse_noise(self,noise_location,source_type = 'csv'):
+		# pass the function the source of the noise data, either from a dictionary or from a csv file
+		# if from dictionary: analyse_noise(noise_location = noise, source_type = 'dict')
+		# if from csv: analyse_noise(noise_location = '/home/pi/Documents, etc.../noise.csv', source_type = 'csv')
+		if source_type.lower() == 'csv':
+			noise = pd.read_csv(noise_location)
+			columns = list(noise)
+			#~ print("Dataframe columns:", columns)
+		elif source_type.lower() == 'dict':
+			print("'dict' not supported at this time. Please choose 'csv'")
+		else: 
+			print("Unknown source type. Please enter source_type = 'dict' or 'csv'")
+
+		rates = np.sort(noise[str(columns[0])].unique())
+		samples = np.sort(noise[str(columns[1])].unique())
+		rows, col = noise.shape
+		#~ print(columns)
+		#~ print(columns[0], columns[1])
+		sample_groups = noise.groupby([noise[str(columns[0])],noise[str(columns[1])]])
+		#~ print(" *** First values:", sample_groups.first())
+		standard_deviations_dataframe = sample_groups[str(columns[2])].std()
+		#~ for i in rates:
+			#~ std[i] = std[i].append(standard_deviations_dataframe[
+		# calculate standard deviation for each no. samples
+		# plot result, showing downward trend for standard deviation as frequency and number of samples increase
+		result = 0
+		return result
 		
 	def check_actual_sample_rate(self, rate = 1200, duration = 10):
 		# check how many samples are received at rate after duration seconds. [rate is in SPS, duration is in seconds].
@@ -581,19 +634,20 @@ def main():
 	time.sleep(0.1) 
 	
 	#~ DeviceID, RevisionID = adc.check_ID()
-	adc.choose_inputs(positive = 'AIN3', negative = 'AIN4')
-	adc.set_frequency()
-	adc.print_status()
-	adc.print_mode3()
-	adc.PGA()
-	adc.print_PGA()
-	adc.reference_config()
-	adc.print_reference_config()
-	adc.calibration()
+	#~ adc.choose_inputs(positive = 'AIN3', negative = 'AIN4')
+	#~ adc.set_frequency()
+	#~ adc.print_status()
+	#~ adc.print_mode3()
+	#~ adc.PGA()
+	#~ adc.print_PGA()
+	#~ adc.reference_config()
+	#~ adc.print_reference_config()
+	#~ adc.calibration()
 	#~ adc.check_actual_sample_rate(rate = 19200, duration = 10)
 	# take a measurement
 	#~ print("Set up measurement:", adc.setup_measurements())
-	adc.check_noise()
+	#~ adc.check_noise()
+	result = adc.analyse_noise(noise_location = '/home/pi/Documents/ads1261evm/noise.csv', source_type = 'csv')
 	#~ while(True):
 		#~ try:
 			#~ response = adc.collecting_measurements()
