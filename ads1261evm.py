@@ -446,14 +446,14 @@ class ADC1261:
 		self.gpio(command="pwdn", status="high")
 		#~ Detect external clock
 		#~ Check DRDY pin (if high, continue; if not, wait)
-		flag = 0
-		while flag == 0:
-			if GPIO.input(self.drdy):
-				self.gpio("START","low") # stops the ADC from taking measurements
-				flag = 1
-				return 0
-			else:
-				pass
+		#~ flag = 0
+		#~ while flag == 0:
+		if GPIO.input(self.drdy):
+			self.gpio("START","low") # stops the ADC from taking measurements
+			#~ flag = 1
+			return 0
+		else:
+			pass
 	
 	def stop(self):
 		stop_message = [self.commandByte1['STOP'][0], self.arbitrary, self.zero]
@@ -493,8 +493,8 @@ class ADC1261:
 		# create range from [1 SPS to 40,000 SPS]
 		sample_rates = [2.5,5,10,16.6,20,50,60,100,400,1200,2400,4800,7200,14400,19200,25600,40000]
 		# create range from [1, 10, 100, 1000, 10000, 100000] but remove those where x/SPS > 120 sec
-		#~ samples = [1,10,100,1000,10000,100000,1000000]
-		samples = [1,10]
+		samples = [1,10,100,1000,10000,100000,1000000]
+		#~ samples = [1,10]
 		noise = {} # creates a dictionary
 		for rate in sample_rates:
 			self.stop()
@@ -646,8 +646,8 @@ def main():
 	#~ adc.check_actual_sample_rate(rate = 19200, duration = 10)
 	# take a measurement
 	#~ print("Set up measurement:", adc.setup_measurements())
-	#~ adc.check_noise()
-	result = adc.analyse_noise(noise_location = '/home/pi/Documents/ads1261evm/noise.csv', source_type = 'csv')
+	adc.check_noise()
+	#~ result = adc.analyse_noise(noise_location = '/home/pi/Documents/ads1261evm/noise.csv', source_type = 'csv')
 	#~ while(True):
 		#~ try:
 			#~ response = adc.collecting_measurements()
