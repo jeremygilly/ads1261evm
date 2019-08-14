@@ -44,7 +44,7 @@ import spidev
 import sys
 import time
 import RPi.GPIO as GPIO
-# import binascii
+import matplotlib.pyplot as plt
 from operator import itemgetter, attrgetter
 import csv
 import pandas as pd
@@ -171,6 +171,7 @@ class ADC1261:
 					drdy = 16,
 					start = 10):
 		
+		GPIO.setwarnings(False)
 		# Set all pin numbering with board numbering scheme (GPIO.BOARD vs GPIO.BCM)
 		GPIO.setmode(GPIO.BOARD)
 		
@@ -204,6 +205,7 @@ class ADC1261:
 		self.arbitrary = 0 # This is command byte 2 as per Table 16.
 		self.CRC2 = 1 # Change this to 0 to tell the register if Cyclic Redundancy Checks are disabled (and 1 to enable) per Table 35: MODE3 Register Field Description.
 		self.zero = 0 # This is command byte 4 per Table 16.
+		
 		
 	# to send a message: bytearray([commandByte1['NOP'][0], self.Arbitrary, self.CRC2, self.Ending])
 	
@@ -446,11 +448,8 @@ class ADC1261:
 		self.gpio(command="pwdn", status="high")
 		#~ Detect external clock
 		#~ Check DRDY pin (if high, continue; if not, wait)
-		#~ flag = 0
-		#~ while flag == 0:
 		if GPIO.input(self.drdy):
 			self.gpio("START","low") # stops the ADC from taking measurements
-			#~ flag = 1
 			return 0
 		else:
 			pass
@@ -476,7 +475,6 @@ class ADC1261:
 				LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status = self.check_status()
 				if DRDY_status.lower() == 'new':
 					read = self.send(rdata)
-					#~ read = self.spi.xfer2([0x12,0,0,0,0,0,0])
 					response = self.convert_to_mV(read[2:5], reference = 5000)
 					return response
 			except KeyboardInterrupt:
@@ -490,11 +488,8 @@ class ADC1261:
 		self.setup_measurements()
 		self.start1()
 		print("Check noise begin...")
-		# create range from [1 SPS to 40,000 SPS]
 		sample_rates = [2.5,5,10,16.6,20,50,60,100,400,1200,2400,4800,7200,14400,19200,25600,40000]
-		# create range from [1, 10, 100, 1000, 10000, 100000] but remove those where x/SPS > 120 sec
-		samples = [1,10,100,1000,10000,100000,1000000]
-		#~ samples = [1,10]
+		samples = [1,10,100,1000,10000,100000]
 		noise = {} # creates a dictionary
 		for rate in sample_rates:
 			self.stop()
@@ -560,27 +555,50 @@ class ADC1261:
 	def analyse_noise(self,noise_location,source_type = 'csv'):
 		# pass the function the source of the noise data, either from a dictionary or from a csv file
 		# if from dictionary: analyse_noise(noise_location = noise, source_type = 'dict')
-		# if from csv: analyse_noise(noise_location = '/home/pi/Documents, etc.../noise.csv', source_type = 'csv')
+		# if from csv: analyse_noise(noise_location = '/home/pi/Documents/.../noise.csv', source_type = 'csv')
 		if source_type.lower() == 'csv':
 			noise = pd.read_csv(noise_location)
 			columns = list(noise)
-			#~ print("Dataframe columns:", columns)
 		elif source_type.lower() == 'dict':
 			print("'dict' not supported at this time. Please choose 'csv'")
 		else: 
 			print("Unknown source type. Please enter source_type = 'dict' or 'csv'")
 
-		rates = np.sort(noise[str(columns[0])].unique())
-		samples = np.sort(noise[str(columns[1])].unique())
-		rows, col = noise.shape
-		#~ print(columns)
-		#~ print(columns[0], columns[1])
-		sample_groups = noise.groupby([noise[str(columns[0])],noise[str(columns[1])]])
+		#~ rates = np.sort(noise[str(columns[0])].unique())
+		#~ samples = np.sort(noise[str(columns[1])].unique())
+		#~ rows, col = noise.shape
+		noise[[str(columns[0]),str(columns[1])]] = noise[[str(columns[0]),str(columns[1])]].astype(str)
+		sample_groups = noise.groupby([str(columns[0]),str(columns[1])], as_index=True).std()
+		#~ sample_groups = sample_groups.sort_index(inplace=True)
 		#~ print(" *** First values:", sample_groups.first())
-		standard_deviations_dataframe = sample_groups[str(columns[2])].std()
-		#~ for i in rates:
-			#~ std[i] = std[i].append(standard_deviations_dataframe[
-		# calculate standard deviation for each no. samples
+		#~ print(sample_groups.head())
+		#~ print(sample_groups.index.names)
+		#~ print(sample_groups.loc['10.0'].loc['10.0'].item())
+		
+		for rate, samples in sample_groups.index:
+			print("Rate:", rate," - Sample:",samples, " - Response:", sample_groups.loc[rate].loc[samples].item())
+			#~ print(y)
+		#~ print(sample_groups.iloc[['14400.0'],['10.0']])
+		#~ standard_deviations_dataframe = sample_groups[str(columns[2])].std()
+		#~ standard_deviations_dataframe = pd.DataFrame(standard_deviations_dataframe)
+		#~ standard_deviations_dataframe = standard_deviations_dataframe.astype(str)
+		#~ print(sample_groups.loc[[0],[0]])
+		#~ print(sample_groups.groups.keys())
+		#~ print("A:",standard_deviations_dataframe.loc[['Rate (SPS)']])
+		#~ print(standard_deviations_dataframe[)
+		#~ for k, rate,a in standard_deviations_dataframe:
+			#~ print(k)
+			#~ print(rate)
+
+		#~ fig = plt.figure()
+		#~ for rate in standard_deviations_dataframe:
+			#~ rate = pd.DataFrame(standard_deviations_dataframe, columns=str(columns[0]))
+			#~ for sample_size in rate:
+				#~ print(sample_size)
+				#~ fig.scatter(sample_size, standard_deviations_dataframe[str(columns[2])])
+			
+		#~ plt.show()
+		
 		# plot result, showing downward trend for standard deviation as frequency and number of samples increase
 		result = 0
 		return result
@@ -646,8 +664,8 @@ def main():
 	#~ adc.check_actual_sample_rate(rate = 19200, duration = 10)
 	# take a measurement
 	#~ print("Set up measurement:", adc.setup_measurements())
-	adc.check_noise()
-	#~ result = adc.analyse_noise(noise_location = '/home/pi/Documents/ads1261evm/noise.csv', source_type = 'csv')
+	#~ adc.check_noise()
+	result = adc.analyse_noise(noise_location = '/home/pi/Documents/ads1261evm/noise.csv', source_type = 'csv')
 	#~ while(True):
 		#~ try:
 			#~ response = adc.collecting_measurements()
