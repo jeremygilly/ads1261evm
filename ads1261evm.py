@@ -48,6 +48,8 @@ import matplotlib.pyplot as plt
 from operator import itemgetter, attrgetter
 import csv
 import pandas as pd
+import ntpath
+import itertools
 
 class ADC1261:
 	
@@ -563,43 +565,40 @@ class ADC1261:
 			print("'dict' not supported at this time. Please choose 'csv'")
 		else: 
 			print("Unknown source type. Please enter source_type = 'dict' or 'csv'")
-
-		#~ rates = np.sort(noise[str(columns[0])].unique())
-		#~ samples = np.sort(noise[str(columns[1])].unique())
-		#~ rows, col = noise.shape
-		noise[[str(columns[0]),str(columns[1])]] = noise[[str(columns[0]),str(columns[1])]].astype(str)
+		
+		sample_mean = round(noise.ix[:,str(columns[2])].mean(),2)
+		print(sample_mean)
 		sample_groups = noise.groupby([str(columns[0]),str(columns[1])], as_index=True).std()
-		#~ sample_groups = sample_groups.sort_index(inplace=True)
-		#~ print(" *** First values:", sample_groups.first())
-		#~ print(sample_groups.head())
-		#~ print(sample_groups.index.names)
-		#~ print(sample_groups.loc['10.0'].loc['10.0'].item())
-		
+		sample_groups *= 1000
+		print(sample_groups)
+		previousRate = 0
+		markers = [(i,j,0) for i in range(2,10) for j in range(1,3)]
+		a = 0
 		for rate, samples in sample_groups.index:
-			print("Rate:", rate," - Sample:",samples, " - Response:", sample_groups.loc[rate].loc[samples].item())
-			#~ print(y)
-		#~ print(sample_groups.iloc[['14400.0'],['10.0']])
-		#~ standard_deviations_dataframe = sample_groups[str(columns[2])].std()
-		#~ standard_deviations_dataframe = pd.DataFrame(standard_deviations_dataframe)
-		#~ standard_deviations_dataframe = standard_deviations_dataframe.astype(str)
-		#~ print(sample_groups.loc[[0],[0]])
-		#~ print(sample_groups.groups.keys())
-		#~ print("A:",standard_deviations_dataframe.loc[['Rate (SPS)']])
-		#~ print(standard_deviations_dataframe[)
-		#~ for k, rate,a in standard_deviations_dataframe:
-			#~ print(k)
-			#~ print(rate)
-
-		#~ fig = plt.figure()
-		#~ for rate in standard_deviations_dataframe:
-			#~ rate = pd.DataFrame(standard_deviations_dataframe, columns=str(columns[0]))
-			#~ for sample_size in rate:
-				#~ print(sample_size)
-				#~ fig.scatter(sample_size, standard_deviations_dataframe[str(columns[2])])
-			
-		#~ plt.show()
+			if rate == previousRate:
+				pass
+			else:
+				x = []
+				y = []
+				for no_of_samples in sample_groups.loc[rate].index:
+					x.append(no_of_samples)
+					y.append(sample_groups.loc[rate].loc[no_of_samples][0])
+				plt.semilogx(x,y, label=rate, marker=markers[a])
+				previousRate = rate
+				if a == 15: a = 0
+				else: a +=1
 		
-		# plot result, showing downward trend for standard deviation as frequency and number of samples increase
+		x = plt.legend(bbox_to_anchor=(1.01,1), loc=2, borderaxespad=0.1, title="Sample rate (Hz)")
+		plt.xlabel('Number of samples')
+		plt.ylabel('Standard deviation (\u03BCV)')
+		plt.title('Noise analysis for a nominal {} mV input'.format(sample_mean))
+		#~ plt.tight_layout()
+		plt.show()
+		head,tail = ntpath.split(noise_location)
+		filename = tail.split(".")[0]
+		
+		plt.savefig(filename+'.png', dpi=150, bbox_extra_atrists=(x), bbox_inches='tight')
+		print("Plot saved as:", noise_location.split(".")[0]+".png")
 		result = 0
 		return result
 		
@@ -665,7 +664,7 @@ def main():
 	# take a measurement
 	#~ print("Set up measurement:", adc.setup_measurements())
 	#~ adc.check_noise()
-	result = adc.analyse_noise(noise_location = '/home/pi/Documents/ads1261evm/noise.csv', source_type = 'csv')
+	result = adc.analyse_noise(noise_location = '/home/pi/Documents/ads1261evm/noise_DAC.csv', source_type = 'csv')
 	#~ while(True):
 		#~ try:
 			#~ response = adc.collecting_measurements()
