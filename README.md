@@ -37,6 +37,7 @@ while (True):
 	response=adc.collect_measurement()
 	print("Response:", response,"mV")
 	time.sleep(0.5)
+adc.end()
 ```
 
 Other function descriptions coming soon. For more information, please read ads1261evm.py for other possible functions.
