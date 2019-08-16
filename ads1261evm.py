@@ -466,7 +466,7 @@ class ADC1261:
 		self.send(start_message)
 		return 0
 	
-	def collecting_measurements(self):	
+	def collect_measurement(self):	
 		#~ Based on Figure 101 in ADS1261 data sheet
 		DRDY_status = 'none'
 		i = 0
@@ -478,7 +478,10 @@ class ADC1261:
 				if DRDY_status.lower() == 'new':
 					read = self.send(rdata)
 					response = self.convert_to_mV(read[2:5], reference = 5000)
+					#~ response=read
 					return response
+				else:
+					pass
 			except KeyboardInterrupt:
 				self.end()
 			except: 
@@ -515,7 +518,7 @@ class ADC1261:
 							time_start = time.time()
 						else:
 							pass
-						response = self.collecting_measurements()
+						response = self.collect_measurement()
 						noise[str(rate)][str(sample)] = np.append(noise[str(rate)][str(sample)],response)
 						i+=1
 		print("Noise:",noise)
@@ -593,11 +596,12 @@ class ADC1261:
 		plt.ylabel('Standard deviation (\u03BCV)')
 		plt.title('Noise analysis for a nominal {} mV input'.format(sample_mean))
 		#~ plt.tight_layout()
-		plt.show()
+		
 		head,tail = ntpath.split(noise_location)
 		filename = tail.split(".")[0]
 		
 		plt.savefig(filename+'.png', dpi=150, bbox_extra_atrists=(x), bbox_inches='tight')
+		plt.show()
 		print("Plot saved as:", noise_location.split(".")[0]+".png")
 		result = 0
 		return result
@@ -612,13 +616,14 @@ class ADC1261:
 		duration = float(duration)
 		time_start = float(time.time())
 		while float(time.time()) - time_start < duration:
-			response = self.collecting_measurements()
+			response = self.collect_measurement()
 			samples = np.append(samples, response)
 		time_finish = time.time()
 		actual = float(np.size(samples))/float(duration)
 		print("Desired sample rate:", rate, "SPS")
 		print("Actual sample rate:", actual, "SPS")
 		print("Sampling duration:", duration, " Samples:", np.size(samples))
+		print(samples)
 		
 		
 	def convert_to_mV(self, array, reference = 5000):
@@ -650,24 +655,28 @@ def main():
 	# 7.5 Electrical Characteristics, ADS1261 data sheet.
 	time.sleep(0.1) 
 	
-	#~ DeviceID, RevisionID = adc.check_ID()
-	#~ adc.choose_inputs(positive = 'AIN3', negative = 'AIN4')
+	DeviceID, RevisionID = adc.check_ID()
+	adc.choose_inputs(positive = 'AIN3', negative = 'AIN4')
 	#~ adc.set_frequency()
-	#~ adc.print_status()
+	adc.print_status()
 	#~ adc.print_mode3()
 	#~ adc.PGA()
 	#~ adc.print_PGA()
 	#~ adc.reference_config()
 	#~ adc.print_reference_config()
 	#~ adc.calibration()
+	#~ print(adc.read_register('MODE1'))
 	#~ adc.check_actual_sample_rate(rate = 19200, duration = 10)
+	#~ response=adc.collect_measurement()
+	#~ print("Response:", response, "mV")
+	
 	# take a measurement
 	#~ print("Set up measurement:", adc.setup_measurements())
 	#~ adc.check_noise()
 	result = adc.analyse_noise(noise_location = '/home/pi/Documents/ads1261evm/noise_DAC.csv', source_type = 'csv')
 	#~ while(True):
 		#~ try:
-			#~ response = adc.collecting_measurements()
+			#~ response = adc.collect_measurement()
 			#~ print("Response:", response)
 			#~ time.sleep(1)
 		#~ except KeyboardInterrupt:
