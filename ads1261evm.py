@@ -167,7 +167,10 @@ class ADC1261:
 	def __init__(self, 
 					bus = 0, 
 					device = 0, 
-					speed = 16000000,
+					# (testing at 19200 SPS) 500 kHz: 1897 SPS, 1 MHz: 1987.3 SPS, 
+					# 2 MHz: 2046 SPS, 4 MHz: 2172.7 SPS, 8 MHz: 2152.3 SPS
+					# 16 MHz: 2224.1 SPS, 32 MHz: too fast (does not capture all bits)
+					speed = 16000000, 
 					rst = 22, 
 					pwdn = 18, 
 					drdy = 16,
@@ -207,9 +210,6 @@ class ADC1261:
 		self.arbitrary = 0 # This is command byte 2 as per Table 16.
 		self.CRC2 = 1 # Change this to 0 to tell the register if Cyclic Redundancy Checks are disabled (and 1 to enable) per Table 35: MODE3 Register Field Description.
 		self.zero = 0 # This is command byte 4 per Table 16.
-		
-		
-	# to send a message: bytearray([commandByte1['NOP'][0], self.Arbitrary, self.CRC2, self.Ending])
 	
 	def send(self, hex_message, human_message="None provided"):
 		try:
@@ -466,30 +466,68 @@ class ADC1261:
 		self.send(start_message)
 		return 0
 	
-	def collect_measurement(self):	
+	def collect_measurement(self, method='software', reference=5000):
+		#~ Choose to use hardware or software polling (pg 51 & 79 of ADS1261 datasheet)	
 		#~ Based on Figure 101 in ADS1261 data sheet
 		DRDY_status = 'none'
 		i = 0
 		rdata = [self.commandByte1['RDATA'][0],0,0,0,0,0,0]
-		while DRDY_status.lower() != 'new':
+		if method.lower() == 'hardware':
 			if i > 1000: self.end()
 			try:
-				LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status = self.check_status()
-				if DRDY_status.lower() == 'new':
-					read = self.send(rdata)
-					response = self.convert_to_mV(read[2:5], reference = 5000)
-					#~ response=read
-					return response
-				else:
+				if GPIO.input(self.drdy):
 					pass
+				else:
+					read = self.send(rdata)
+					response = self.convert_to_mV(read[2:5], reference = reference) # commenting here improves by 400%
+					return response
 			except KeyboardInterrupt:
 				self.end()
 			except: 
 				print("Wow! No new conversion??")
 				i+=1
 				pass
+
+		elif method.lower() == 'software':
+			while DRDY_status.lower() != 'new':
+				if i > 1000: self.end()
+				try:
+					LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status = self.check_status()
+					if DRDY_status.lower() == 'new':
+						read = self.send(rdata)
+						response = self.convert_to_mV(read[2:5], reference = reference)
+						return response
+					else:
+						pass
+				except KeyboardInterrupt:
+					self.end()
+				except: 
+					print("Wow! No new conversion??")
+					i+=1
+					pass
+		else:
+			print("Missing method to collect measurement. Please select either 'hardware' or 'software'.")
+			
 		
-	def check_noise(self):
+	
+	def convert_to_mV(self, array, reference = 5000):
+		BYPASS_status, gain = self.check_PGA() # Running this check makes the data rate 16% slower at 19200 SPS.
+		#~ gain=1
+		# Only for use without CRC checking!!
+		#use twos complement online to check
+		MSB = array[0]
+		MID = array[1]
+		LSB = array[2]
+		bit24 = (MSB<<16)+(MID<<8)+LSB
+		if MSB>127: # i.e. signed negative
+			bits_from_fullscale = (2**24-bit24)
+			mV = -bits_from_fullscale*reference/(gain*2**23)
+		else:
+			mV = bit24*reference/(gain*2**23)
+		return mV
+			
+	def check_noise(self, filename, digital_filter='FIR'):
+		
 		self.setup_measurements()
 		self.start1()
 		print("Check noise begin...")
@@ -499,7 +537,7 @@ class ADC1261:
 		for rate in sample_rates:
 			self.stop()
 			rate = str(rate)
-			self.set_frequency(data_rate = rate, digital_filter = 'FIR')
+			self.set_frequency(data_rate = rate, digital_filter = digital_filter)
 			print("Sampling at", rate,"SPS now...")
 			noise[rate] = {}
 			self.start1()
@@ -522,8 +560,8 @@ class ADC1261:
 						noise[str(rate)][str(sample)] = np.append(noise[str(rate)][str(sample)],response)
 						i+=1
 		print("Noise:",noise)
-
-		csv_file = "/home/pi/Documents/ads1261evm/noise.csv"
+		
+		csv_file = "/home/pi/Documents/ads1261evm/"+filename+"_"+digital_fiter+"_noise.csv"
 		fieldnames = ['Rate (SPS)', 'No. of Samples', 'Response (mV)']
 		try:
 			with open(csv_file, 'w') as csvfile:
@@ -556,8 +594,56 @@ class ADC1261:
 		except KeyError:
 			print(KeyError, "Sad")
 		return noise
+	
+	def verify_noise(self, positive = 'AIN9', negative = 'AIN8'):
+		print("Please check that", positive, "and", negative,"are shorted.")
 		
-	def analyse_noise(self,noise_location,source_type = 'csv'):
+		self.setup_measurements()
+		self.start1()
+		print("Verifying noise from ADS1261 data sheet...")
+		adc.choose_inputs(positive = positive, negative = negative)
+		adc.reference_config(reference_enable=1) # use internal reference
+		filters = ['fir', 'sinc1', 'sinc2', 'sinc3', 'sinc4']
+		sample_rates = [2.5, 5, 10, 16.6, 20, 50, 60, 100, 400, 1200, 2400, 4800, 7200, 14400, 19200, 25600, 40000]
+		gain_list = [1, 2, 4, 8, 16, 32, 64, 128]
+		# start new array
+		for gain in gain_list:
+			adc.PGA(BYPASS=1, GAIN = gain)
+			for rate in sample_rates:
+				if item < 40:
+					filters = filter1
+				elif item > 40 && item < 10000:
+					filters = filter1[1:]
+				else:
+					filters = ['fir'] # sinc 5 is automatically implements for higher rates, so this is just a placeholder
+				for each_filter in filters:
+					adc.set_frequency(data_rate=rate, digital_filter=each_filter)
+					i = 0
+					start_time = time.now()
+					responses = []
+					while time.now() - start_time < 10 && i < 8192:
+						response_uV = collect_measurement(method='hardware', reference=5000)*1000
+						responses.extend(response_uV)
+					responses = np.array(responses)
+					uV_RMS = np.std(responses)
+					uV_PP = np.max(responses) - np.min(responses)
+						
+						
+					#~ uV_RMS = standard_deviation(array)
+					#~ uV_PP = max(array) - min(array)	
+
+		# append to dataframe 
+		
+
+		# compare to downloaded data sheet
+
+	
+	
+	
+		
+		return 0
+		
+	def analyse_noise(self, noise_location, digital_filter="Unknown", source_type = 'csv'):
 		# pass the function the source of the noise data, either from a dictionary or from a csv file
 		# if from dictionary: analyse_noise(noise_location = noise, source_type = 'dict')
 		# if from csv: analyse_noise(noise_location = '/home/pi/Documents/.../noise.csv', source_type = 'csv')
@@ -594,8 +680,7 @@ class ADC1261:
 		x = plt.legend(bbox_to_anchor=(1.01,1), loc=2, borderaxespad=0.1, title="Sample rate (Hz)")
 		plt.xlabel('Number of samples')
 		plt.ylabel('Standard deviation (\u03BCV)')
-		plt.title('Noise analysis for a nominal {} mV input'.format(sample_mean))
-		#~ plt.tight_layout()
+		plt.title('Noise analysis for a nominal {} mV input with a {} filter'.format(sample_mean, digital_filter))
 		
 		head,tail = ntpath.split(noise_location)
 		filename = tail.split(".")[0]
@@ -606,40 +691,35 @@ class ADC1261:
 		result = 0
 		return result
 		
-	def check_actual_sample_rate(self, rate = 1200, duration = 10):
+	def check_actual_sample_rate(self, method='software', rate = 1200, duration = 10):
 		# check how many samples are received at rate after duration seconds. [rate is in SPS, duration is in seconds].
 		self.setup_measurements()
 		i = 0
 		samples = []
+		self.stop()
 		self.set_frequency(data_rate = rate)
 		self.start1()
 		duration = float(duration)
+		rdata = [self.commandByte1['RDATA'][0],0,0,0,0,0,0]
 		time_start = float(time.time())
 		while float(time.time()) - time_start < duration:
-			response = self.collect_measurement()
+			#~ if GPIO.input(self.drdy):
+				#~ pass
+			#~ else:
+				#~ read = self.send(rdata)
+				#~ read = self.spi.xfer2(rdata)
+				#~ response = self.convert_to_mV(read[2:5], reference = 5000)
+				#~ response = read
+				#~ return response
+			response = self.collect_measurement(method=method)
 			samples = np.append(samples, response)
 		time_finish = time.time()
-		actual = float(np.size(samples))/float(duration)
+		#~ samples = samples/3
+		actual = float(np.size(samples))/float(duration)/7
 		print("Desired sample rate:", rate, "SPS")
 		print("Actual sample rate:", actual, "SPS")
-		print("Sampling duration:", duration, " Samples:", np.size(samples))
+		print("Sampling duration:", duration, " Samples:", np.size(samples)/7)
 		print(samples)
-		
-		
-	def convert_to_mV(self, array, reference = 5000):
-		BYPASS_status, gain = self.check_PGA()
-		# Only for use without CRC checking!!
-		#use twos complement online to check
-		MSB = array[0]
-		MID = array[1]
-		LSB = array[2]
-		bit24 = (MSB<<16)+(MID<<8)+LSB
-		if MSB>127: # i.e. signed negative
-			bits_from_fullscale = (2**24-bit24)
-			mV = -bits_from_fullscale*reference/(gain*2**23)
-		else:
-			mV = bit24*reference/(gain*2**23)
-		return mV
 	
 	def end(self):
 		self.stop()
@@ -647,54 +727,61 @@ class ADC1261:
 		GPIO.cleanup() # Resets all GPIO pins to GPIO.INPUT (prevents GPIO.OUTPUT being left high and short-circuiting).
 		print("\nSPI closed. GPIO cleaned up. System exited.")
 		sys.exit()
+		
+	def present_text(self, mode='continuous', data_rate=1200, delay=0.5, method='software'):
+		self.start1()
+		response='none'
+		while(type(response)!=float):
+			try:
+				response = self.collect_measurement(method=method)
+				if type(response) == float:
+					print("Response:",response," mV")
+				else:
+					print("Response was not a float.")
+					print(response)
+				time.sleep(delay)
+				if mode=='pulse' and type(response)==float: self.end()
+			except KeyboardInterrupt:
+				self.end()
 
 def main():
 	adc = ADC1261()
 	
+	# Set pins, Check for external clock, DRDY pin check, Set start pin low
+	adc.setup_measurements()
+	
+	# Configure and verify ADC settings
+	DeviceID, RevisionID = adc.check_ID()
+	adc.choose_inputs(positive = 'AIN3', negative = 'AIN4')
+	adc.set_frequency(data_rate=1200)
+	adc.print_status()
+	#~ adc.print_mode3()
+	adc.PGA(BYPASS=1)
+	adc.print_PGA()
+	adc.reference_config(reference_enable=1)
+	adc.print_reference_config()
+	#~ adc.calibration()
+	#~ print(adc.read_register('MODE1'))
+	
+	# Wait for reference voltage to settle
 	# Internal voltage reference takes 100 ms to settle to within 0.001% of final value after power-on.
 	# 7.5 Electrical Characteristics, ADS1261 data sheet.
 	time.sleep(0.1) 
 	
-	DeviceID, RevisionID = adc.check_ID()
-	adc.choose_inputs(positive = 'AIN3', negative = 'AIN4')
-	#~ adc.set_frequency()
-	adc.print_status()
-	#~ adc.print_mode3()
-	#~ adc.PGA()
-	#~ adc.print_PGA()
-	#~ adc.reference_config()
-	#~ adc.print_reference_config()
-	#~ adc.calibration()
-	#~ print(adc.read_register('MODE1'))
-	#~ adc.check_actual_sample_rate(rate = 19200, duration = 10)
-	#~ response=adc.collect_measurement()
-	#~ print("Response:", response, "mV")
+	# Set start high
+	adc.start1()
 	
-	# take a measurement
-	#~ print("Set up measurement:", adc.setup_measurements())
-	#~ adc.check_noise()
+	# Take measurements
+	#~ adc.check_actual_sample_rate(method='hardware', rate = 19200, duration = 10)
+	#~ adc.check_noise(filename='',digital_filter='sinc5')
+	#~ adc.present_text(method='hardware', mode='pulse')
+	
+	
+	# End
+	adc.end()
+	
+	# Noise analysis (if required)
 	result = adc.analyse_noise(noise_location = '/home/pi/Documents/ads1261evm/noise_DAC.csv', source_type = 'csv')
-	#~ while(True):
-		#~ try:
-			#~ response = adc.collect_measurement()
-			#~ print("Response:", response)
-			#~ time.sleep(1)
-		#~ except KeyboardInterrupt:
-			#~ adc.end()
-		#~ except:
-			#~ print(e)
-			#~ adc.end()
-	adc.end()		
-
+	
 if __name__ == "__main__":
 	main()
-	
-def spi_dev_change():
-	# why is this happening? A test case.
-	adc = ADC1261()
-	sent_message = [adc.commandByte1['RREG'][0]+adc.registerAddress['ID'],
-						adc.arbitrary, 
-						adc.zero]
-	print("Message to be sent:", sent_message)
-	received = adc.spi.xfer2(sent_message)
-	print("Sent Message after xfer2:", sent_message, "- Received:", received)
