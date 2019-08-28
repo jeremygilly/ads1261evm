@@ -157,12 +157,36 @@ class ADC1261:
 		('AIN3', int('11',2)),
 	])
 	
+	mode1register = dict({
+	('normal', int('00',2)<<5),
+	('chop', int('01',2)<<5),
+	('2-wire ac-excitation', int('10',2)<<5),
+	('4-wire ac-excitation', int('11',2)<<5),
+	('continuous', int('0',2)<<4),
+	('pulse', int('1',2)<<4),
+	('0us', int('0000',2)),
+	('50us', int('0001',2)),
+	('59us', int('0010',2)),
+	('67us', int('0011',2)),
+	('85us', int('0100',2)),
+	('119us', int('0101',2)),
+	('189us', int('0110',2)),
+	('328us', int('0111',2)),
+	('605us', int('1000',2)),
+	('1.16ms', int('1001',2)),
+	('2.27ms', int('1010',2)),
+	('4.49ms', int('1011',2)),
+	('8.93ms', int('1100',2)),
+	('17.8ms', int('1101',2))
+	})
+	
 	inv_registerAddress = {v: k for k, v in registerAddress.items()}
 	inv_INPMUXregister = {v: k for k, v in INPMUXregister.items()}
 	inv_available_data_rates = {v: k for k, v in available_data_rates.items()}
 	inv_available_digital_filters = {v: k for k, v in available_digital_filters.items()}
 	inv_available_gain = {v: k for k, v in available_gain.items()}
 	inv_available_reference = {v: k for k, v in available_reference.items()}
+	inv_mode1register = {v: k for k, v in mode1register.items()}
 	
 	def __init__(self, 
 					bus = 0, 
@@ -265,6 +289,7 @@ class ADC1261:
 				print("Unexplained fail regarding writing to a register. Read back was unexpected.")
 				print("Register Location:", register_location, "- Read back:", read, "- Written/sent back:", write_check, "- Data sent:", int(register_data,2))
 				self.end()
+				pass
 		else:
 			print("Error writing register - failed WREG command")
 			print("DIN:", hex_massage, "- DOUT:",write_check)
@@ -392,6 +417,33 @@ class ADC1261:
 				"\nGPIO2 Data:", GPIO2_status,
 				"\nGPIO1 Data:", GPIO1_status,
 				"\nGPIO0 Data:", GPIO0_status)
+	
+	def mode1(self, CHOP = 'normal', CONVRT = 'continuous', DELAY = '50us'):
+		# CHOP = 'normal', 'chop', '2-wire ac-excitation', or '4-wire ac-excitation'
+		# CONVRT = 'continuous' or 'pulse'
+		# DELAY = '0us', '50us', '59us', '67us', '85us', '119us','189us', '328us','605us','1.16ms','2.27ms','4.49ms','8.93ms', or '17.8ms'
+		[CHOP, CONVRT, DELAY] = [CHOP.lower(), CONVRT.lower(), DELAY.lower()] # formatting
+		send_mode1 = self.mode1register[CHOP]+self.mode1register[CONVRT]+self.mode1register[DELAY]
+		send_mode1 = format(send_mode1, '08b')
+		self.write_register('MODE1', send_mode1)
+		self.check_mode1()
+		
+	def check_mode1(self):
+		read = self.read_register('MODE1')
+		byte_string = list(map(int,format(read,'08b')))
+		chop_bits = int(''.join(map(str,byte_string[1:3])),2)<<5
+		CHOP = 'normal' if chop_bits == 0 else self.inv_mode1register[chop_bits]
+		CONVRT = self.inv_mode1register[int(str(byte_string[3]),2)<<4]
+		DELAY = self.inv_mode1register[int(''.join(map(str,byte_string[4:])),2)]
+		return CHOP, CONVRT, DELAY
+	
+	def print_mode1(self):
+		CHOP, CONVRT, DELAY = self.check_mode1()
+		print("\n *** MODE 1 Register Check: ***"
+				"\nChop and AC-Excitation Mode:", CHOP,
+				"\nADC Conversion Mode:", CONVRT,
+				"\nConversion Start Delay:", DELAY)
+	
 				
 	def PGA(self, BYPASS = 0, GAIN = 1):
 		# BYPASS can be 0 (PGA mode (default)) or 1 (PGA  bypass).
@@ -479,12 +531,13 @@ class ADC1261:
 					pass
 				else:
 					read = self.send(rdata)
-					response = self.convert_to_mV(read[2:5], reference = reference) # commenting here improves by 400%
+					response = self.convert_to_mV(read[2:5], reference = reference) # commenting here improves data rate by 400%
+					response = float(response)
 					return response
 			except KeyboardInterrupt:
 				self.end()
 			except: 
-				print("Wow! No new conversion??")
+				print("Wow! No new conversion??", i)
 				i+=1
 				pass
 
@@ -595,53 +648,122 @@ class ADC1261:
 			print(KeyError, "Sad")
 		return noise
 	
-	def verify_noise(self, positive = 'AIN9', negative = 'AIN8'):
-		print("Please check that", positive, "and", negative,"are shorted.")
+	#~ def verify_noise(self, positive = 'AIN9', negative = 'AIN8'):
+		#~ print("Please check that", positive, "and", negative,"are shorted.")
 		
-		self.setup_measurements()
-		self.start1()
-		print("Verifying noise from ADS1261 data sheet...")
-		adc.choose_inputs(positive = positive, negative = negative)
-		adc.reference_config(reference_enable=1) # use internal reference
-		filters = ['fir', 'sinc1', 'sinc2', 'sinc3', 'sinc4']
-		sample_rates = [2.5, 5, 10, 16.6, 20, 50, 60, 100, 400, 1200, 2400, 4800, 7200, 14400, 19200, 25600, 40000]
-		gain_list = [1, 2, 4, 8, 16, 32, 64, 128]
-		# start new array
-		for gain in gain_list:
-			adc.PGA(BYPASS=1, GAIN = gain)
-			for rate in sample_rates:
-				if item < 40:
-					filters = filter1
-				elif item > 40 && item < 10000:
-					filters = filter1[1:]
-				else:
-					filters = ['fir'] # sinc 5 is automatically implements for higher rates, so this is just a placeholder
-				for each_filter in filters:
-					adc.set_frequency(data_rate=rate, digital_filter=each_filter)
-					i = 0
-					start_time = time.now()
-					responses = []
-					while time.now() - start_time < 10 && i < 8192:
-						response_uV = collect_measurement(method='hardware', reference=5000)*1000
-						responses.extend(response_uV)
-					responses = np.array(responses)
-					uV_RMS = np.std(responses)
-					uV_PP = np.max(responses) - np.min(responses)
-						
+		#~ self.setup_measurements()
+		#~ self.start1()
+		#~ print("Verifying noise from ADS1261 data sheet...")
+		#~ adc.choose_inputs(positive = positive, negative = negative)
+		#~ adc.reference_config(reference_enable=1) # use internal reference
+		#~ filters = ['fir', 'sinc1', 'sinc2', 'sinc3', 'sinc4']
+		#~ sample_rates = [2.5, 5, 10, 16.6, 20, 50, 60, 100, 400, 1200, 2400, 4800, 7200, 14400, 19200, 25600, 40000]
+		#~ gain_list = [1, 2, 4, 8, 16, 32, 64, 128]
+		#~ # start new array
+		#~ for gain in gain_list:
+			#~ adc.PGA(BYPASS=1, GAIN = gain)
+			#~ for rate in sample_rates:
+				#~ if item < 40:
+					#~ filters = filter1
+				#~ elif item > 40 && item < 10000:
+					#~ filters = filter1[1:]
+				#~ else:
+					#~ filters = ['fir'] # sinc 5 is automatically implements for higher rates, so this is just a placeholder
+				#~ for each_filter in filters:
+					#~ adc.set_frequency(data_rate=rate, digital_filter=each_filter)
+					#~ i = 0
+					#~ start_time = time.now()
+					#~ responses = []
+					#~ while time.now() - start_time < 10 && i < 8192:
+						#~ response_uV = collect_measurement(method='hardware', reference=5000)*1000
+						#~ responses.extend(response_uV)
+					#~ responses = np.array(responses)
+					#~ uV_RMS = np.std(responses)
+					#~ uV_PP = np.max(responses) - np.min(responses)
+					 	
 						
 					#~ uV_RMS = standard_deviation(array)
 					#~ uV_PP = max(array) - min(array)	
 
-		# append to dataframe 
+		#~ # append to dataframe 
 		
 
-		# compare to downloaded data sheet
-
-	
-	
-	
+		#~ # compare to downloaded data sheet
 		
-		return 0
+		#~ return 0
+	
+	def noise_quickcheck(self):
+		pulse_16 = []
+		pulse_64 = []
+		continuous_16 = []
+		continuous_64 = []
+
+		self.mode1(CHOP='normal', CONVRT='pulse', DELAY = '50us')
+		
+		while(len(pulse_16) < 17):
+			self.gpio("START", "high")
+			try:
+				response = self.collect_measurement(method='hardware')
+				if type(response) == float:
+					pulse_16.append(response)
+					self.gpio("START", "low")
+				else:
+					pass
+			except:
+				pass
+
+		while(len(pulse_16) < 17):
+			self.gpio("START", "high")
+			try:
+				response = self.collect_measurement(method='hardware')
+				if type(response) == float:
+					pulse_16.append(response)
+					self.gpio("START", "low")
+				else:
+					pass
+			except:
+				pass
+
+		while(len(pulse_64) < 65):
+			self.gpio("START", "high")
+			try:
+				response = self.collect_measurement(method='hardware')
+				if type(response) == float:
+					pulse_64.append(response)
+					self.gpio("START", "low")
+				else:
+					pass
+			except:
+				pass
+				
+		self.mode1(CHOP='normal', CONVRT='continuous', DELAY = '50us')
+		self.start1()
+		while(len(continuous_16) < 17):
+			try:
+				response = self.collect_measurement(method='hardware')
+				if type(response) == float:
+					continuous_16.append(response)
+				else:
+					pass
+			except:
+				pass
+				
+		while(len(continuous_64) < 65):
+			try:
+				response = self.collect_measurement(method='hardware')
+				if type(response) == float:
+					continuous_64.append(response)	
+				else:
+					pass
+			except:
+				pass
+		
+		print("\nStandard deviation of 16 pulsed samples:", np.std(np.array(pulse_16))*1000, "uV RMS")
+		print("Standard deviation of 64 pulsed samples:",np.std(np.array(pulse_64))*1000, "uV RMS")
+		print("Standard deviation of 16 continuous samples:",np.std(np.array(continuous_16))*1000, "uV RMS")
+		print("Standard deviation of 64 continuous samples:",np.std(np.array(continuous_64))*1000, "uV RMS")
+		print("If you are experiencing non-systematic noise, the standard deviation should halve when taking 4x as many samples")
+		print("If it has not, you are operating near the noise floor of the device and averaging won't improve your resolution.")
 		
 	def analyse_noise(self, noise_location, digital_filter="Unknown", source_type = 'csv'):
 		# pass the function the source of the noise data, either from a dictionary or from a csv file
@@ -731,14 +853,17 @@ class ADC1261:
 	def present_text(self, mode='continuous', data_rate=1200, delay=0.5, method='software'):
 		self.start1()
 		response='none'
-		while(type(response)!=float):
+		#~ while(type(response)!=float):
+		while(True):
 			try:
 				response = self.collect_measurement(method=method)
 				if type(response) == float:
-					print("Response:",response," mV")
+					#~ print("Response:",response," mV")
+					pass
 				else:
-					print("Response was not a float.")
-					print(response)
+					#~ print("Response was not a float.")
+					#~ print(response)
+					pass
 				time.sleep(delay)
 				if mode=='pulse' and type(response)==float: self.end()
 			except KeyboardInterrupt:
@@ -749,11 +874,10 @@ def main():
 	
 	# Set pins, Check for external clock, DRDY pin check, Set start pin low
 	adc.setup_measurements()
-	
 	# Configure and verify ADC settings
 	DeviceID, RevisionID = adc.check_ID()
-	adc.choose_inputs(positive = 'AIN3', negative = 'AIN4')
-	adc.set_frequency(data_rate=1200)
+	adc.choose_inputs(positive = 'AIN8', negative = 'AIN9')
+	adc.set_frequency(data_rate=19200)
 	adc.print_status()
 	#~ adc.print_mode3()
 	adc.PGA(BYPASS=1)
@@ -769,19 +893,34 @@ def main():
 	time.sleep(0.1) 
 	
 	# Set start high
-	adc.start1()
+	#~ adc.start1()
+	adc.mode1(CHOP='normal', CONVRT='pulse', DELAY = '50us')
+	adc.print_mode1()
+	adc.noise_quickcheck()
+	#~ while(True):
+		#~ adc.gpio("START","high") # starts the ADC from taking measurements
+		#~ try:
+			#~ response = adc.collect_measurement(method='hardware')
+			#~ if (type(response)==float):
+				#~ print(response)
+				#~ adc.gpio("START","low") # starts the ADC from taking measurements
+		#~ except KeyboardInterrupt:
+			#~ adc.end()
+		#~ except:
+			#~ pass
+	
 	
 	# Take measurements
 	#~ adc.check_actual_sample_rate(method='hardware', rate = 19200, duration = 10)
-	#~ adc.check_noise(filename='',digital_filter='sinc5')
-	#~ adc.present_text(method='hardware', mode='pulse')
+	#~ adc.check_noise(filename='noise_pulsed.csv',digital_filter='sinc5')
+	#~ adc.present_text(method='hardware', mode='continuous', data_rate=19200, delay=0)
 	
 	
 	# End
 	adc.end()
 	
 	# Noise analysis (if required)
-	result = adc.analyse_noise(noise_location = '/home/pi/Documents/ads1261evm/noise_DAC.csv', source_type = 'csv')
+	#~ result = adc.analyse_noise(noise_location = '/home/pi/Documents/ads1261evm/noise_DAC.csv', source_type = 'csv')
 	
 if __name__ == "__main__":
 	main()
