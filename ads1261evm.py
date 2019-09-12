@@ -519,7 +519,7 @@ class ADC1261:
 		self.send(start_message)
 		return 0
 	
-	def collect_measurement(self, method='software', reference=5000):
+	def collect_measurement(self, method='software', reference=5000, gain = 1):
 		#~ Choose to use hardware or software polling (pg 51 & 79 of ADS1261 datasheet)	
 		#~ Based on Figure 101 in ADS1261 data sheet
 		DRDY_status = 'none'
@@ -532,7 +532,7 @@ class ADC1261:
 					pass
 				else:
 					read = self.send(rdata)
-					response = self.convert_to_mV(read[2:5], reference = reference) # commenting here improves data rate by 400%
+					response = self.convert_to_mV(read[2:5], reference = reference, gain = gain) # commenting here improves data rate by 400%
 					response = float(response)
 					return response
 			except KeyboardInterrupt:
@@ -549,7 +549,7 @@ class ADC1261:
 					LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status = self.check_status()
 					if DRDY_status.lower() == 'new':
 						read = self.send(rdata)
-						response = self.convert_to_mV(read[2:5], reference = reference)
+						response = self.convert_to_mV(read[2:5], reference = reference, gain = gain)
 						return response
 					else:
 						pass
@@ -564,9 +564,7 @@ class ADC1261:
 			
 		
 	
-	def convert_to_mV(self, array, reference = 5000):
-		BYPASS_status, gain = self.check_PGA() # Running this check makes the data rate 16% slower at 19200 SPS.
-		#~ gain=1
+	def convert_to_mV(self, array, reference = 5000, gain = 1):
 		# Only for use without CRC checking!!
 		#use twos complement online to check
 		MSB = array[0]
@@ -819,26 +817,64 @@ class ADC1261:
 		self.set_frequency(data_rate = rate)
 		self.start1()
 		duration = float(duration)
-		rdata = [self.commandByte1['RDATA'][0],0,0,0,0,0,0]
+		BYPASS_status, gain = self.check_PGA()
 		time_start = float(time.time())
 		while float(time.time()) - time_start < duration:
-			#~ if GPIO.input(self.drdy):
-				#~ pass
-			#~ else:
-				#~ read = self.send(rdata)
-				#~ read = self.spi.xfer2(rdata)
-				#~ response = self.convert_to_mV(read[2:5], reference = 5000)
-				#~ response = read
-				#~ return response
-			response = self.collect_measurement(method=method)
-			samples = np.append(samples, response)
+			response = self.collect_measurement(method=method, gain = gain)
+			if type(response)==float:
+				i+=1
+				#~ samples.append(response)
 		time_finish = time.time()
-		#~ samples = samples/3
-		actual = float(np.size(samples))/float(duration)/7
+		#~ actual = float(np.size(samples))/float(duration)
+		i = i/float(duration)
 		print("Desired sample rate:", rate, "SPS")
-		print("Actual sample rate:", actual, "SPS")
-		print("Sampling duration:", duration, " Samples:", np.size(samples)/7)
-		print(samples)
+		#~ print("Actual sample rate:", actual, "SPS")
+		print("Actual iteration rate:", i, "SPS")
+		
+	def fourier(self, method = 'software', rate = 1200, duration = 10):
+		# do a frequency analysis at rate after duration seconds. [rate is in SPS, duration is in seconds].
+		self.setup_measurements()
+		i = 0
+		samples = []
+		self.stop()
+		self.set_frequency(data_rate = rate)
+		self.start1()
+		duration = float(duration)
+		BYPASS_status, gain = self.check_PGA()
+		time_start = float(time.time())
+		while float(time.time()) - time_start < duration:
+			response = self.collect_measurement(method=method, gain = gain)
+			if type(response)==float:
+				i+=1
+				samples.append(response)
+		time_finish = time.time()
+		print("Samples collected:", i)
+		Fs = i/float(duration)
+		print("Actual sample rate:", Fs, "SPS")
+		
+		# need to interpolate between data points before applying fft (fft requires uniform sampling rate)
+		# need to implement python millis
+		samples_fft = np.asarray(samples)*1e6
+		Ts = 1/Fs # sample interval
+		t = np.arange(0,duration,Ts) # time vector??
+		n = len(samples)
+		k = np.arange(n)
+		T = n/Fs
+		freq = k/T
+		fft = np.fft.rfft(samples_fft)/n # real sample FFT (rfft) and normalisation used
+		freq_range = freq[range(fft.shape[0])]
+		
+		fig, ax = plt.subplots(2,1)
+		ax[0].plot(t,samples, 'b')
+		ax[0].set_xlabel("Time (s)")
+		ax[0].set_ylabel("Potential (mV)")
+		ax[1].plot(freq_range[1:], abs(fft)[1:], 'r')
+		ax[1].set_yscale('log')
+		#~ ax[1].set_xscale('log')
+		ax[1].set_xlabel("Frequency (Hz)")
+		ax[1].set_ylabel("|Amplitude| (nV/Hz)")
+		plt.tight_layout()
+		plt.show()
 	
 	def end(self):
 		self.stop()
@@ -872,7 +908,8 @@ def main():
 	adc.setup_measurements()
 	# Configure and verify ADC settings
 	DeviceID, RevisionID = adc.check_ID()
-	adc.choose_inputs(positive = 'AIN8', negative = 'AIN9')
+	#~ adc.choose_inputs(positive = 'AIN8', negative = 'AIN9')
+	adc.choose_inputs(positive = 'AIN3', negative = 'AIN4')
 	adc.set_frequency(data_rate=19200)
 	adc.print_status()
 	#~ adc.print_mode3()
@@ -906,7 +943,14 @@ def main():
 			#~ pass
 	
 	# Take measurements
-	#~ adc.check_actual_sample_rate(method='hardware', rate = 19200, duration = 10)
+	#~ adc.check_actual_sample_rate(method='hardware', rate = 2400, duration = 4)
+	#~ adc.check_actual_sample_rate(method='hardware', rate = 14400, duration = 4)
+	#~ adc.check_actual_sample_rate(method='hardware', rate = 19200, duration = 4)
+	#~ adc.check_actual_sample_rate(method='hardware', rate = 25600, duration = 4)
+	#~ adc.check_actual_sample_rate(method='hardware', rate = 40000, duration = 4)
+	
+	#~ adc.fourier(method = 'hardware', rate = 1200, duration = 1)
+	
 	#~ adc.check_noise(filename='noise_pulsed.csv',digital_filter='sinc5')
 	#~ adc.present_text(method='hardware', mode='continuous', data_rate=19200, delay=0)
 	#~ adc.verify_noise()
