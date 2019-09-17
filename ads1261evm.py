@@ -191,9 +191,6 @@ class ADC1261:
 	def __init__(self, 
 					bus = 0, 
 					device = 0, 
-					# (testing at 19200 SPS) 500 kHz: 1897 SPS, 1 MHz: 1987.3 SPS, 
-					# 2 MHz: 2046 SPS, 4 MHz: 2172.7 SPS, 8 MHz: 2152.3 SPS
-					# 16 MHz: 2224.1 SPS, 32 MHz: too fast (does not capture all bits)
 					speed = 16000000, 
 					rst = 22, 
 					pwdn = 18, 
@@ -302,7 +299,7 @@ class ADC1261:
 	
 	def check_inputs(self):
 		read = self.read_register('INPMUX')
-		print("Input polarity check --- Positive side:", self.inv_INPMUXregister[int(format(read,'08b')[:4],2)], "- Negative side:", self.inv_INPMUXregister[int(format(read,'08b')[4:],2)])
+		#~ print("Input polarity check --- Positive side:", self.inv_INPMUXregister[int(format(read,'08b')[:4],2)], "- Negative side:", self.inv_INPMUXregister[int(format(read,'08b')[4:],2)])
 	
 	def set_frequency(self, data_rate = 20, digital_filter = 'FIR', print_freq=True):
 		data_rate = float(data_rate) # just to ensure we remove any other data types (e.g. strings)
@@ -533,8 +530,12 @@ class ADC1261:
 				else:
 					read = self.send(rdata)
 					response = self.convert_to_mV(read[2:5], reference = reference, gain = gain) # commenting here improves data rate by 400%
-					response = float(response)
-					return response
+					if response != None:
+						response = float(response)
+						return response
+					else:
+						response = 0
+						pass
 			except KeyboardInterrupt:
 				self.end()
 			except: 
@@ -831,13 +832,14 @@ class ADC1261:
 		#~ print("Actual sample rate:", actual, "SPS")
 		print("Actual iteration rate:", i, "SPS")
 		
-	def fourier(self, method = 'software', rate = 1200, duration = 10):
+	def fourier(self, method = 'software', rate = 1200, duration = 10, positive = 'AIN9', negative = 'AIN8'):
 		# do a frequency analysis at rate after duration seconds. [rate is in SPS, duration is in seconds].
 		self.setup_measurements()
 		i = 0
 		samples = []
 		self.stop()
 		self.set_frequency(data_rate = rate)
+		self.choose_inputs(positive = positive, negative = negative)
 		self.start1()
 		duration = float(duration)
 		BYPASS_status, gain = self.check_PGA()
@@ -883,7 +885,7 @@ class ADC1261:
 		print("\nSPI closed. GPIO cleaned up. System exited.")
 		sys.exit()
 		
-	def present_text(self, delay=0.5):
+	def present_text(self, method = 'software', data_rate = 0, mode = 0, delay=0.5):
 		self.start1()
 		response='none'
 		#~ while(type(response)!=float):
@@ -891,7 +893,7 @@ class ADC1261:
 			try:
 				response = self.collect_measurement(method=method)
 				if type(response) == float:
-					#~ print("Response:",response," mV")
+					print("Response:",response," mV")
 					pass
 				else:
 					#~ print("Response was not a float.")
@@ -909,7 +911,7 @@ def main():
 	# Configure and verify ADC settings
 	DeviceID, RevisionID = adc.check_ID()
 	#~ adc.choose_inputs(positive = 'AIN8', negative = 'AIN9')
-	adc.choose_inputs(positive = 'AIN3', negative = 'AIN4')
+	adc.choose_inputs(positive = 'AIN6', negative = 'AIN7')
 	adc.set_frequency(data_rate=19200)
 	adc.print_status()
 	#~ adc.print_mode3()
@@ -949,10 +951,10 @@ def main():
 	#~ adc.check_actual_sample_rate(method='hardware', rate = 25600, duration = 4)
 	#~ adc.check_actual_sample_rate(method='hardware', rate = 40000, duration = 4)
 	
-	#~ adc.fourier(method = 'hardware', rate = 1200, duration = 1)
+	#~ adc.fourier(method = 'hardware', rate = 14400, duration = 10, positive = 'AIN3' , negative = 'AIN4')
 	
 	#~ adc.check_noise(filename='noise_pulsed.csv',digital_filter='sinc5')
-	#~ adc.present_text(method='hardware', mode='continuous', data_rate=19200, delay=0)
+	adc.present_text(method='hardware', mode='continuous', data_rate=19200, delay=1)
 	#~ adc.verify_noise()
 	
 	# End
