@@ -180,6 +180,20 @@ class ADC1261:
 	('17.8ms', int('1101',2))
 	})
 	
+	IMAG_register = dict({
+	('off', int('0000',2)),
+	('50', int('0001',2)),
+	('100', int('0010',2)),
+	('250', int('0011',2)),
+	('500', int('0100',2)),
+	('750', int('0101',2)),
+	('1000', int('0110',2)),
+	('1500', int('0111',2)),
+	('2000', int('1000',2)),
+	('2500', int('1001',2)),
+	('3000', int('1010',2)),
+	})
+	
 	inv_registerAddress = {v: k for k, v in registerAddress.items()}
 	inv_INPMUXregister = {v: k for k, v in INPMUXregister.items()}
 	inv_available_data_rates = {v: k for k, v in available_data_rates.items()}
@@ -187,6 +201,7 @@ class ADC1261:
 	inv_available_gain = {v: k for k, v in available_gain.items()}
 	inv_available_reference = {v: k for k, v in available_reference.items()}
 	inv_mode1register = {v: k for k, v in mode1register.items()}
+	inv_IMAG_register = {v: k for k, v in IMAG_register.items()}
 	
 	def __init__(self, 
 					bus = 0, 
@@ -882,6 +897,13 @@ class ADC1261:
 		# Table 7.5: Electrical Characteristics 
 		# When the internal temperature is 25 deg C, the output is 122.4 mV. 
 		# The temperature coefficient is 0.42 mV/C.
+		
+		# Turn PGA on with gain = 1
+		self.PGA(BYPASS=0, GAIN = int(1))
+		# Burn-out current sources disabled
+		
+		# AC-excitation mode disabled
+		
 		self.choose_inputs(positive = 'INTEMPSENSE', negative = 'INTEMPSENSE')
 		self.start1()
 		response = 'none'
@@ -894,6 +916,45 @@ class ADC1261:
 				self.end()
 		temperature = (response - 111.9)/0.42
 		return temperature
+		
+	def current_out(self, current1 = 'off', current2 = 'off'):
+		# current must be in uA
+		current1 = str(current1)
+		current2 = str(current2)
+		if current1 in self.IMAG_register and current2 in self.IMAG_register:
+			current2_IMAG = self.IMAG_register[current2]<<4
+			current1_IMAG = self.IMAG_register[current1]
+		else:
+			print("IMAG value not available.\nYou requested '" + current + "' but only "+str(list(self.IMAG_register.keys()))+" are available.")
+		
+		self.send(current2_IMAG + current1_IMAG)
+		
+		return current1, current2
+		
+	def power_readback(self, power = 'analog'):
+		# Turn PGA on with gain = 1
+		self.PGA(BYPASS=0, GAIN = int(1))
+		# Burn-out current sources disabled
+		
+		# AC-excitation mode disabled
+		
+		if power == 'analog':
+			self.choose_inputs(positive = 'INTAV4', negative = 'INTAV4')
+		else:
+			self.choose_inputs(positive = 'INTDV4', negative = 'INTDV4')
+		
+		self.start1()
+		response = 'none'
+		i = 0
+		while(type(response) != float and i < 1000):
+			try:
+				response = self.collect_measurement(method='hardware', reference = 5000, gain = 1)
+				i += 1
+			except KeyboardInterrupt:
+				self.end()
+		
+		return response*4
+		
 	
 	def end(self):
 		self.stop()
@@ -979,7 +1040,8 @@ def main():
 	#~ temperature = adc.check_temperature()
 	#~ print("Temperature:", temperature)
 	#~ adc.verify_noise()
-	
+	print(adc.power_readback(power = 'analog'))
+	print(adc.power_readback(power = 'digital'))
 	# End
 	adc.end()
 	
