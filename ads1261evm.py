@@ -44,12 +44,12 @@ import spidev
 import sys
 import time
 import RPi.GPIO as GPIO
-import matplotlib.pyplot as plt
-from operator import itemgetter, attrgetter
-import csv
-import pandas as pd
-import ntpath
-import itertools
+#~ import matplotlib.pyplot as plt
+#~ from operator import itemgetter, attrgetter
+#~ import csv
+#~ import pandas as pd
+#~ import ntpath
+#~ import itertools
 
 class ADC1261:
 	
@@ -877,6 +877,23 @@ class ADC1261:
 		ax[1].set_ylabel("|Amplitude| (nV/Hz)")
 		plt.tight_layout()
 		plt.show()
+		
+	def check_temperature(self):
+		# Table 7.5: Electrical Characteristics 
+		# When the internal temperature is 25 deg C, the output is 122.4 mV. 
+		# The temperature coefficient is 0.42 mV/C.
+		self.choose_inputs(positive = 'INTEMPSENSE', negative = 'INTEMPSENSE')
+		self.start1()
+		response = 'none'
+		i = 0
+		while(type(response) != float and i < 1000):
+			try:
+				response = self.collect_measurement(method='hardware', reference = 5000, gain = 1)
+				i += 1
+			except KeyboardInterrupt:
+				self.end()
+		temperature = (response - 111.9)/0.42
+		return temperature
 	
 	def end(self):
 		self.stop()
@@ -954,7 +971,13 @@ def main():
 	#~ adc.fourier(method = 'hardware', rate = 14400, duration = 10, positive = 'AIN3' , negative = 'AIN4')
 	
 	#~ adc.check_noise(filename='noise_pulsed.csv',digital_filter='sinc5')
-	adc.present_text(method='hardware', mode='continuous', data_rate=19200, delay=1)
+	#~ adc.present_text(method='hardware', mode='continuous', data_rate=19200, delay=1)
+	#~ while(1):
+		#~ print(adc.collect_measurement(method='hardware'))
+		#~ time.sleep(1)
+	#~ print("Temperature check:")
+	#~ temperature = adc.check_temperature()
+	#~ print("Temperature:", temperature)
 	#~ adc.verify_noise()
 	
 	# End
