@@ -105,6 +105,21 @@ class ADC1261:
 		('VCOM', int('1111',2)) # Internal connection to V common
 	])
 	
+	OUTPMUXregister = dict([
+		('AIN0',int('0000',2)),
+		('AIN1',int('0001',2)),
+		('AIN2',int('0010',2)),
+		('AIN3',int('0011',2)),
+		('AIN4',int('0100',2)),
+		('AIN5',int('0101',2)),
+		('AIN6',int('0110',2)),
+		('AIN7',int('0111',2)),
+		('AIN8',int('1000',2)),
+		('AIN9',int('1001',2)),
+		('AINCOM',int('1010',2)),
+		('NONE',int('1111',2)),
+	])
+	
 	available_data_rates = dict([
 		# Check Table 32 - ADS1261 data sheet
 		(float(2.5), int('00000',2)),
@@ -202,6 +217,7 @@ class ADC1261:
 	inv_available_reference = {v: k for k, v in available_reference.items()}
 	inv_mode1register = {v: k for k, v in mode1register.items()}
 	inv_IMAG_register = {v: k for k, v in IMAG_register.items()}
+	inv_OUTPMUXregister = {v: k for k, v in OUTPMUXregister.items()}
 	
 	def __init__(self, 
 					bus = 0, 
@@ -917,19 +933,62 @@ class ADC1261:
 		temperature = (response - 111.9)/0.42
 		return temperature
 		
-	def current_out(self, current1 = 'off', current2 = 'off'):
+	def current_out_magnitude(self, current1 = 'off', current2 = 'off'):
 		# current must be in uA
 		current1 = str(current1)
 		current2 = str(current2)
 		if current1 in self.IMAG_register and current2 in self.IMAG_register:
-			current2_IMAG = self.IMAG_register[current2]<<4
-			current1_IMAG = self.IMAG_register[current1]
+			current2_IMAG = int(self.IMAG_register[current2]<<4)
+			current1_IMAG = int(self.IMAG_register[current1])
+			bits = current2_IMAG + current1_IMAG
+			message = format(bits,'08b')
+			self.write_register('IMAG', message)
 		else:
 			print("IMAG value not available.\nYou requested '" + current + "' but only "+str(list(self.IMAG_register.keys()))+" are available.")
 		
-		self.send(current2_IMAG + current1_IMAG)
-		
 		return current1, current2
+	
+	def current_out_pin(self, IMUX1 = 'NONE', IMUX2 = 'NONE'):
+		IMUX1 = str(IMUX1).upper()
+		IMUX2 = str(IMUX2).upper()
+		if IMUX1 == IMUX2 and IMUX1 != 'NONE':
+			print("IMUX1 and IMUX2 are both the same pin. They must either be different output pins, or both be 'NONE'.")
+			adc.end()
+		if IMUX1 in self.OUTPMUXregister:
+			if IMUX2 in self.OUTPMUXregister:
+				IMUX2_bits = int(self.OUTPMUXregister[IMUX2]<<4)
+				IMUX1_bits = int(self.OUTPMUXregister[IMUX1])
+				bits = IMUX2_bits + IMUX1_bits
+				message = format(bits,'08b')
+				self.write_register('IMUX', message)
+			else:
+				print("IMUX2 value not available.\nYou requested '" + IMUX2 + "' but only "+str(list(self.OUTPMUXregister.keys()))+" are available.")
+				adc.end()
+		else:
+			print("IMUX1 value not available.\nYou requested '" + IMUX1 + "' but only "+str(list(self.OUTPMUXregister.keys()))+" are available.")
+			adc.end()
+	
+		return IMUX1, IMUX2
+		
+	def check_current(self):
+		# returns current 1 and current 2 [in uA]
+		# returns pins in IMUX 1 and IMUX 2
+		IMUX_register = format(int(self.read_register('IMUX')),'08b')
+		IMAG_register = format(int(self.read_register('IMAG')),'08b')
+
+		IMUX1_bits = int(IMUX_register[4:],2)
+		IMUX2_bits = int(IMUX_register[:4],2)
+
+		IMAG1_bits = int(IMAG_register[4:],2)
+		IMAG2_bits = int(IMAG_register[:4],2)
+
+		current1 = self.inv_IMAG_register[IMAG1_bits]
+		current2 = self.inv_IMAG_register[IMAG2_bits]
+
+		IMUX1 = self.inv_OUTPMUXregister[IMUX1_bits]
+		IMUX2 = self.inv_OUTPMUXregister[IMUX2_bits]
+
+		return current1, IMUX1, current2, IMUX2
 		
 	def power_readback(self, power = 'analog'):
 		# Turn PGA on with gain = 1
@@ -1040,8 +1099,21 @@ def main():
 	#~ temperature = adc.check_temperature()
 	#~ print("Temperature:", temperature)
 	#~ adc.verify_noise()
-	print(adc.power_readback(power = 'analog'))
-	print(adc.power_readback(power = 'digital'))
+	analog = float(adc.power_readback(power = 'analog'))
+	analog = analog - 1100
+	print("Analog:", analog)
+	#~ print(adc.power_readback(power = 'digital'))
+	
+	# IDAC1 to have 100 uA output (pin AIN0)
+	
+	x,y = adc.current_out_magnitude(current1 = 1000, current2 = 'off')
+	print("Current out magnitude:", x, y)
+	x,y = adc.current_out_pin(IMUX1 = 'ain0', IMUX2 = 'NONE')
+	print("Current out pin:",x,y)
+	
+	current1, IMUX1, current2, IMUX2 = adc.check_current()
+	print(current1, IMUX1, current2, IMUX2)
+	
 	# End
 	adc.end()
 	
