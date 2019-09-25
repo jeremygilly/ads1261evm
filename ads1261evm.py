@@ -44,12 +44,12 @@ import spidev
 import sys
 import time
 import RPi.GPIO as GPIO
-#~ import matplotlib.pyplot as plt
-#~ from operator import itemgetter, attrgetter
-#~ import csv
-#~ import pandas as pd
-#~ import ntpath
-#~ import itertools
+import matplotlib.pyplot as plt
+from operator import itemgetter, attrgetter
+import csv
+import pandas as pd
+import ntpath
+import itertools
 
 class ADC1261:
 	
@@ -209,6 +209,14 @@ class ADC1261:
 	('3000', int('1010',2)),
 	})
 	
+	BOCSmagnitude_register = {
+	'off':int('000',2),
+	'50na':int('001',2),
+	'200na':int('010',2),
+	'1ua':int('011',2),
+	'10ua':int('100',2)
+	}
+	
 	inv_registerAddress = {v: k for k, v in registerAddress.items()}
 	inv_INPMUXregister = {v: k for k, v in INPMUXregister.items()}
 	inv_available_data_rates = {v: k for k, v in available_data_rates.items()}
@@ -218,6 +226,7 @@ class ADC1261:
 	inv_mode1register = {v: k for k, v in mode1register.items()}
 	inv_IMAG_register = {v: k for k, v in IMAG_register.items()}
 	inv_OUTPMUXregister = {v: k for k, v in OUTPMUXregister.items()}
+	inv_BOCSmagnitude_register = {v: k for k, v in BOCSmagnitude_register.items()}
 	
 	def __init__(self, 
 					bus = 0, 
@@ -896,8 +905,14 @@ class ADC1261:
 		freq = k/T
 		fft = np.fft.rfft(samples_fft)/n # real sample FFT (rfft) and normalisation used
 		freq_range = freq[range(fft.shape[0])]
-		
+		print("creating figure...")
 		fig, ax = plt.subplots(2,1)
+		
+		# Make the vectors the same length
+		if len(t) > len(samples): t = t[:-(len(t)-len(samples))]
+		elif len(t) < len(samples): samples = samples[:-(-len(t)+len(samples))]
+		else: pass
+		
 		ax[0].plot(t,samples, 'b')
 		ax[0].set_xlabel("Time (s)")
 		ax[0].set_ylabel("Potential (mV)")
@@ -907,6 +922,7 @@ class ADC1261:
 		ax[1].set_xlabel("Frequency (Hz)")
 		ax[1].set_ylabel("|Amplitude| (nV/Hz)")
 		plt.tight_layout()
+		print("plotting...")
 		plt.show()
 		
 	def check_temperature(self):
@@ -1013,7 +1029,51 @@ class ADC1261:
 				self.end()
 		
 		return response*4
+	
+	def burn_out_current_source(self, VBIAS = 'disabled', polarity = 'pull-up mode', magnitude = '200na'):	
+		# pass lower case string variables only to dictionaries
+		VBIAS = str(VBIAS).lower()
+		polarity = str(polarity).lower()
+		magnitude = str(magnitude).lower()
+		print('')
+		# return dictionary input value for each
+		if VBIAS == 'disabled': VBIAS = 0
+		elif VBIAS == 'enabled': VBIAS = 1
+		else: 
+			print("VBIAS error. You selected:", VBIAS, "\nPlease select either 'disabled' or 'enabled' only.")
+			self.end()
 		
+		if polarity == 'pull-up mode': polarity = 0
+		elif polarity == 'pull-down mode': polarity = 1
+		else: 
+			print("Polarity error. You selected:", polarity, "\nPlease select either 'pull-up mode' or 'pull-down mode' only.")
+			self.end()
+		
+		if magnitude in self.BOCSmagnitude_register:
+			magnitude = self.BOCSmagnitude_register[magnitude]
+		else: 
+			print("Magnitude error. You selected:", magnitude, "\nPlease select", str(list(self.BOCSmagnitude_register.keys())), "only.")
+			self.end()
+		VBIAS = VBIAS << 4
+		polarity = polarity << 3
+		register_data = bin(VBIAS + polarity + magnitude)
+		self.write_register('INPBIAS', register_data)
+		Vbias, polarity, magnitude = self.burn_out_current_source_check()
+		return Vbias, polarity, magnitude
+		
+	def burn_out_current_source_check(self):
+		read = self.read_register('INPBIAS')
+		byte_string = list(map(int,format(read,'08b')))
+		if byte_string[3] == 0: Vbias = 'disabled'
+		else: Vbias = 'enabled'
+		if byte_string[4] == 0: polarity = 'pull-up mode'
+		else: polarity = 'pull-down mode'
+		magnitude = self.inv_BOCSmagnitude_register[int(''.join(str(i) for i in byte_string[5:8]),2)]
+		print(" ***Burn out current source and Vbias (INPBIAS) register: ***")
+		print("Vbias:", Vbias)
+		print("Burn-out current source polarity:",polarity)
+		print("Burn-out current source magnitude:", magnitude)
+		return Vbias, polarity, magnitude
 	
 	def end(self):
 		self.stop()
@@ -1088,7 +1148,7 @@ def main():
 	#~ adc.check_actual_sample_rate(method='hardware', rate = 25600, duration = 4)
 	#~ adc.check_actual_sample_rate(method='hardware', rate = 40000, duration = 4)
 	
-	#~ adc.fourier(method = 'hardware', rate = 14400, duration = 10, positive = 'AIN3' , negative = 'AIN4')
+	#~ adc.fourier(method = 'hardware', rate = 20, duration = 3, positive = 'AIN8' , negative = 'AIN9')
 	
 	#~ adc.check_noise(filename='noise_pulsed.csv',digital_filter='sinc5')
 	#~ adc.present_text(method='hardware', mode='continuous', data_rate=19200, delay=1)
@@ -1099,20 +1159,23 @@ def main():
 	#~ temperature = adc.check_temperature()
 	#~ print("Temperature:", temperature)
 	#~ adc.verify_noise()
-	analog = float(adc.power_readback(power = 'analog'))
-	analog = analog - 1100
-	print("Analog:", analog)
+	#~ analog = float(adc.power_readback(power = 'analog'))
+	#~ analog = analog - 1100
+	#~ print("Analog:", analog)
 	#~ print(adc.power_readback(power = 'digital'))
 	
 	# IDAC1 to have 100 uA output (pin AIN0)
 	
-	x,y = adc.current_out_magnitude(current1 = 1000, current2 = 'off')
-	print("Current out magnitude:", x, y)
-	x,y = adc.current_out_pin(IMUX1 = 'ain0', IMUX2 = 'NONE')
-	print("Current out pin:",x,y)
+	#~ x,y = adc.current_out_magnitude(current1 = 1000, current2 = 'off')
+	#~ print("Current out magnitude:", x, y)
+	#~ x,y = adc.current_out_pin(IMUX1 = 'ain0', IMUX2 = 'NONE')
+	#~ print("Current out pin:",x,y)
 	
-	current1, IMUX1, current2, IMUX2 = adc.check_current()
-	print(current1, IMUX1, current2, IMUX2)
+	#~ current1, IMUX1, current2, IMUX2 = adc.check_current()
+	#~ print(current1, IMUX1, current2, IMUX2)
+	
+	adc.burn_out_current_source(VBIAS = 'disabled', polarity = 'pull-down mode', magnitude = 'off')
+	#~ adc.burn_out_current_source_check()
 	
 	# End
 	adc.end()
