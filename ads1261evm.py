@@ -121,7 +121,7 @@ class ADC1261:
 	])
 	
 	available_data_rates = dict([
-		# Check Table 32 - ADS1261 data sheet
+		# Check Table 32 - ADS1261 data sheet. All values are floats in SPS.
 		(float(2.5), int('00000',2)),
 		(5, int('00001',2)),
 		(10, int('00010',2)),
@@ -142,7 +142,7 @@ class ADC1261:
 	])
 		
 	available_digital_filters = dict([
-		# Check Table 32 - ADS1261 data sheet
+		# Check Table 32 - ADS1261 data sheet. sinc4 has the greatest noise attenuation and greatest time constant.
 		('sinc1', int('000',2)),
 		('sinc2', int('001',2)),
 		('sinc3', int('010',2)),
@@ -173,48 +173,48 @@ class ADC1261:
 	])
 	
 	mode1register = dict({
-	('normal', int('00',2)<<5),
-	('chop', int('01',2)<<5),
-	('2-wire ac-excitation', int('10',2)<<5),
-	('4-wire ac-excitation', int('11',2)<<5),
-	('continuous', int('0',2)<<4),
-	('pulse', int('1',2)<<4),
-	('0us', int('0000',2)),
-	('50us', int('0001',2)),
-	('59us', int('0010',2)),
-	('67us', int('0011',2)),
-	('85us', int('0100',2)),
-	('119us', int('0101',2)),
-	('189us', int('0110',2)),
-	('328us', int('0111',2)),
-	('605us', int('1000',2)),
-	('1.16ms', int('1001',2)),
-	('2.27ms', int('1010',2)),
-	('4.49ms', int('1011',2)),
-	('8.93ms', int('1100',2)),
-	('17.8ms', int('1101',2))
+		('normal', int('00',2)<<5),
+		('chop', int('01',2)<<5),
+		('2-wire ac-excitation', int('10',2)<<5),
+		('4-wire ac-excitation', int('11',2)<<5),
+		('continuous', int('0',2)<<4),
+		('pulse', int('1',2)<<4),
+		('0us', int('0000',2)),
+		('50us', int('0001',2)),
+		('59us', int('0010',2)),
+		('67us', int('0011',2)),
+		('85us', int('0100',2)),
+		('119us', int('0101',2)),
+		('189us', int('0110',2)),
+		('328us', int('0111',2)),
+		('605us', int('1000',2)),
+		('1.16ms', int('1001',2)),
+		('2.27ms', int('1010',2)),
+		('4.49ms', int('1011',2)),
+		('8.93ms', int('1100',2)),
+		('17.8ms', int('1101',2))
 	})
 	
 	IMAG_register = dict({
-	('off', int('0000',2)),
-	('50', int('0001',2)),
-	('100', int('0010',2)),
-	('250', int('0011',2)),
-	('500', int('0100',2)),
-	('750', int('0101',2)),
-	('1000', int('0110',2)),
-	('1500', int('0111',2)),
-	('2000', int('1000',2)),
-	('2500', int('1001',2)),
-	('3000', int('1010',2)),
+		('off', int('0000',2)),
+		('50', int('0001',2)),
+		('100', int('0010',2)),
+		('250', int('0011',2)),
+		('500', int('0100',2)),
+		('750', int('0101',2)),
+		('1000', int('0110',2)),
+		('1500', int('0111',2)),
+		('2000', int('1000',2)),
+		('2500', int('1001',2)),
+		('3000', int('1010',2)),
 	})
 	
 	BOCSmagnitude_register = {
-	'off':int('000',2),
-	'50na':int('001',2),
-	'200na':int('010',2),
-	'1ua':int('011',2),
-	'10ua':int('100',2)
+		'off':int('000',2),
+		'50na':int('001',2),
+		'200na':int('010',2),
+		'1ua':int('011',2),
+		'10ua':int('100',2)
 	}
 	
 	inv_registerAddress = {v: k for k, v in registerAddress.items()}
@@ -570,11 +570,11 @@ class ADC1261:
 				else:
 					read = self.send(rdata)
 					response = self.convert_to_mV(read[2:5], reference = reference, gain = gain) # commenting here improves data rate by 400%
-					if response != None:
+					if response not in [None, 'None']:
 						response = float(response)
 						return response
 					else:
-						response = 0
+						#~ response = 0
 						pass
 			except KeyboardInterrupt:
 				self.end()
@@ -933,7 +933,7 @@ class ADC1261:
 		# Turn PGA on with gain = 1
 		self.PGA(BYPASS=0, GAIN = int(1))
 		# Burn-out current sources disabled
-		
+		self.burn_out_current_source(VBIAS = 'disabled', polarity = 'pull-up mode', magnitude = 'off')
 		# AC-excitation mode disabled
 		
 		self.choose_inputs(positive = 'INTEMPSENSE', negative = 'INTEMPSENSE')
@@ -1010,25 +1010,26 @@ class ADC1261:
 		# Turn PGA on with gain = 1
 		self.PGA(BYPASS=0, GAIN = int(1))
 		# Burn-out current sources disabled
-		
+		self.burn_out_current_source(VBIAS = 'disabled', polarity = 'pull-up mode', magnitude = 'off')
 		# AC-excitation mode disabled
 		
+		# Declare the pins
 		if power == 'analog':
 			self.choose_inputs(positive = 'INTAV4', negative = 'INTAV4')
 		else:
 			self.choose_inputs(positive = 'INTDV4', negative = 'INTDV4')
 		
+		# Measure the potential
 		self.start1()
 		response = 'none'
 		i = 0
-		while(type(response) != float and i < 1000):
+		while(type(response) != float and i < 1000 or response == None):
 			try:
 				response = self.collect_measurement(method='hardware', reference = 5000, gain = 1)
 				i += 1
+				if type(response) == float and response != None: return response*4
 			except KeyboardInterrupt:
 				self.end()
-		
-		return response*4
 	
 	def burn_out_current_source(self, VBIAS = 'disabled', polarity = 'pull-up mode', magnitude = '200na'):	
 		# pass lower case string variables only to dictionaries
@@ -1061,7 +1062,7 @@ class ADC1261:
 		Vbias, polarity, magnitude = self.burn_out_current_source_check()
 		return Vbias, polarity, magnitude
 		
-	def burn_out_current_source_check(self):
+	def burn_out_current_source_check(self, print_data = False):
 		read = self.read_register('INPBIAS')
 		byte_string = list(map(int,format(read,'08b')))
 		if byte_string[3] == 0: Vbias = 'disabled'
@@ -1069,10 +1070,11 @@ class ADC1261:
 		if byte_string[4] == 0: polarity = 'pull-up mode'
 		else: polarity = 'pull-down mode'
 		magnitude = self.inv_BOCSmagnitude_register[int(''.join(str(i) for i in byte_string[5:8]),2)]
-		print(" ***Burn out current source and Vbias (INPBIAS) register: ***")
-		print("Vbias:", Vbias)
-		print("Burn-out current source polarity:",polarity)
-		print("Burn-out current source magnitude:", magnitude)
+		if print_data == True:
+			print(" ***Burn out current source and Vbias (INPBIAS) register: ***")
+			print("Vbias:", Vbias)
+			print("Burn-out current source polarity:",polarity)
+			print("Burn-out current source magnitude:", magnitude)
 		return Vbias, polarity, magnitude
 	
 	def end(self):
@@ -1174,7 +1176,7 @@ def main():
 	#~ current1, IMUX1, current2, IMUX2 = adc.check_current()
 	#~ print(current1, IMUX1, current2, IMUX2)
 	
-	adc.burn_out_current_source(VBIAS = 'disabled', polarity = 'pull-down mode', magnitude = 'off')
+	#~ adc.burn_out_current_source(VBIAS = 'disabled', polarity = 'pull-down mode', magnitude = 'off')
 	#~ adc.burn_out_current_source_check()
 	
 	# End
