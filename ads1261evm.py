@@ -44,7 +44,7 @@ import spidev
 import sys
 import time
 import RPi.GPIO as GPIO
-import matplotlib.pyplot as plt
+#~ import matplotlib.pyplot as plt
 from operator import itemgetter, attrgetter
 import csv
 import pandas as pd
@@ -268,16 +268,20 @@ class ADC1261:
         self.spi.lsbfirst = False # Appears to be false according to Table 12. Be wary of full-scale and offset calibration registers (need 24-bit for words)
         self.bits = 24 # This is to do with future conversions (1/2**24) - not an SPI read/write issue.
         
-        self.arbitrary = 0 # This is command byte 2 as per Table 16.
+        self.arbitrary = 0x10 # This is command byte 2 as per Table 16.
         self.CRC2 = 1 # Change this to 0 to tell the register if Cyclic Redundancy Checks are disabled (and 1 to enable) per Table 35: MODE3 Register Field Description.
         self.zero = 0 # This is command byte 4 per Table 16.
     
     def send(self, hex_message, human_message="None provided"):
+        
         try:
-            byte_message = hex_message
+            byte_message = [int(list_element,2) if type(list_element) != int else list_element for list_element in hex_message]
+            #~ print("byte message in send:", byte_message)
             returnedMessage = self.spi.xfer2(byte_message)
+            #~ print("returned message in send:", returnedMessage)
             return returnedMessage
         except Exception as e:
+            print(byte_message, returnedMessage)
             print ("Message send failure:", human_message)
             print ("Attempted hex message:", hex_message)
             print ("Attempted byte message:", byte_message)
@@ -285,33 +289,68 @@ class ADC1261:
             self.end()
             
                 
-    def read_register(self, register_location):
+    def read_register(self, register_location, CRC = 'off'):
+        ''' Takes the register location. Requires CRC to be None or any other value.
+        If the CRC bit is unknown, function will assume it is off, then on.
+        Returns the value in the read register.'''
         register_location = register_location.upper()
-        hex_message = [self.commandByte1['RREG'][0]+self.registerAddress[register_location],
-                        self.arbitrary, 
-                        self.zero]
-        hex_message_check = hex_message
-        human = self.commandByte1['RREG'][1]
-        returnedMessage = self.send(hex_message=hex_message)
-        
-        if returnedMessage[0:2] == [255,hex_message_check[1]]:
+        hex_message = [self.commandByte1['RREG'][0]+self.registerAddress[register_location], self.arbitrary]
+        if CRC == None:
+            # Assume the CRC is off.
+            #~ print("Assuming CRC is off")
+            #~ read_message = hex_message + [self.crc(hex_message)] + [self.zero]*8
+            #~ print(199, int(self.crc(hex_message),2))
+            read_message = hex_message + [199] + [self.zero]*8
+            #~ read_message = hex_message + [self.zero]*16
+            #~ print("read message:", read_message)
+            returnedMessage = self.send(hex_message=read_message)
+            #~ print("returned message from read_register:", returnedMessage)
+            if returnedMessage[1] != int(hex_message[0],2):
+                print("Failed readback. CRC may be on.")
+                #~ crc_2 = self.crc(hex_message)
+                #~ read_message = hex_message + [crc_2] + [self.zero]
+                #~ returnedMessage = self.send(hex_message=read_message)
+                #~ if returnedMessage[1] != hex_message[0]:
+                    #~ print("Expected output:", [255, hex_message[0]],
+                        #~ "Received:", returnedMessage[0:2])
+            else:
+                #~ print("Equal:", returnedMessage, int(hex_message[0],2))
+                return returnedMessage[4]
+        elif CRC.lower() == 'off':
+            read_message = hex_message + [self.zero]*1
+            #~ print("read message if CRC is off:", read_message)
+            #~ print("CRC:", self.crc(hex_message), int(self.crc(hex_message),2))
+            returnedMessage = self.send(hex_message=read_message)
             return returnedMessage[2]
-        else:
-            return -1
+            #~ print("Returned message:", returnedMessage)
+        elif CRC.lower() == 'on':
+            pass
             
+    
+            #~ if :
+                #~ return returnedMessage[2]
+            #~ else:
+                #~ return -1           
             
     def write_register(self, register_location, register_data):
         # expects to see register_location as a human readable string
         register_location = register_location.upper()
         # expects to see register_data as a binary string
-        if not isinstance(register_data,str):
+        if not isinstance(register_data, str):
             register_data = format(register_data,'08b')
         
-        hex_message = [self.commandByte1['WREG'][0]+self.registerAddress[register_location],int(register_data,2)]
-        human_message = [self.commandByte1['WREG'][1],register_data]
-        write_check = self.send(hex_message)
-        
-        if write_check == [255, hex_message[1]]:
+        hex_message = [self.commandByte1['WREG'][0]+self.registerAddress[register_location],int(register_data,2),0,0,0]
+        #~ read_message = hex_message + [self.crc(hex_message)] + [self.zero]*1
+        read_message = hex_message
+        #~ print("WREG hex and read messages:", hex_message, read_message)
+        write_check = self.send(read_message)
+        #~ print("Write_check:", write_check)
+
+        #~ if write_check[-1] != crc_2:
+            #~ print("CRC output error. Sent:", crc_2, "Recevied:", write_check[-1])
+            #~ self.end()
+
+        if write_check[1] == read_message[0]:
             read = self.read_register(register_location)
             if read == -1:
                 print("Read back failed. Requires write_register review.")
@@ -325,21 +364,22 @@ class ADC1261:
             else:
                 print("Unexplained fail regarding writing to a register. Read back was unexpected.")
                 print("Register Location:", register_location, "- Read back:", read, "- Written/sent back:", write_check, "- Data sent:", int(register_data,2))
-                self.end()
+#                self.end()
                 pass
         else:
             print("Error writing register - failed WREG command")
-            print("DIN:", hex_message, "- DOUT:",write_check)
+            print("DIN [0]:", hex_message, "- DOUT [1]:", write_check)
+            print("Have you enabled setup_measurements() before running this WREG command?")
             self.end()
-    
+
     def choose_inputs(self, positive, negative = 'VCOM'):
         input_pins = int(self.INPMUXregister[positive]<<4)+self.INPMUXregister[negative]
         self.write_register('INPMUX', format(input_pins,'08b'))
-        self.check_inputs()
+#        self.check_inputs()
     
     def check_inputs(self):
         read = self.read_register('INPMUX')
-        #~ print("Input polarity check --- Positive side:", self.inv_INPMUXregister[int(format(read,'08b')[:4],2)], "- Negative side:", self.inv_INPMUXregister[int(format(read,'08b')[4:],2)])
+        print("Input polarity check --- Positive side:", self.inv_INPMUXregister[int(format(read,'08b')[:4],2)], "- Negative side:", self.inv_INPMUXregister[int(format(read,'08b')[4:],2)])
     
     def set_frequency(self, data_rate = 20, digital_filter = 'FIR', print_freq=True):
         data_rate = float(data_rate) # just to ensure we remove any other data types (e.g. strings)
@@ -350,17 +390,25 @@ class ADC1261:
         
     def check_frequency(self, print_freq=True):
         read = self.read_register('MODE0')
-        if (print_freq==True): print("Data rate and digital filter --- Data rate:", self.inv_available_data_rates[int(format(read,'08b')[:5],2)], "SPS - Digital Filter:", self.inv_available_digital_filters[int(format(read,'08b')[5:],2)])
+        data_rate = self.inv_available_data_rates[int(format(read,'08b')[:5],2)]
+        digital_filter = self.inv_available_digital_filters[int(format(read,'08b')[5:],2)]
+        if (print_freq==True): 
+            print("Data rate and digital filter --- Data rate:", data_rate, 
+            "SPS - Digital Filter:", digital_filter)
+        return data_rate, digital_filter
         
     def check_ID(self):
+        ''' Checks the version of the ADC that you have.
+            Returns the DeviceID (ADS1261x) and the Revision ID (0001, etc). '''
         hex_checkID = [self.commandByte1['RREG'][0]+self.registerAddress['ID'],
                         self.arbitrary, 
                         self.zero]
         ID = self.send(hex_checkID)
-        if ID[1] == hex_checkID[1]:
+        #~ print("Sent:", hex_checkID, "Received:", ID) # for diagnostics only.
+        if ID[1] == hex_checkID[0]:
             ID = bin(ID[2])
             ID_description = {"1000":"ADS1261 or ADS1261B", "1010":"ADS1260B"} # Table 30 from ADS1261 data sheet
-            print("Device ID:", ID_description[ID[2:6]], "- Revision ID:", ID[6:10])
+            #~ print("Device ID:", ID_description[ID[2:6]], "- Revision ID:", ID[6:10])
             [DeviceID, RevisionID] = ID_description[ID[2:6]], ID[6:10]
             return DeviceID, RevisionID
         else:
@@ -368,7 +416,7 @@ class ADC1261:
             print ("Register sent:", ID[1], "\nRegister received:", hex_checkID[1])
             self.end()
             
-    def set_status(self, CRCERR = 0, RESET = 1):
+    def clear_status(self, CRCERR = 0, RESET = 0):
         send_status = 0
         CRCERR = CRCERR<<6
         send_status = send_status + CRCERR + RESET
@@ -415,6 +463,56 @@ class ADC1261:
             GPIO.output(self.start, GPIO.LOW)
         else:
             print('Invalid gpio(command,status). Please use "RESET", "PWDN", or, "START"; and "high" or "low".')
+    
+    def crc(self, input_bitstring, check_value = None, polynomial_bitstring = '100000111'):
+        ''' Calculates the CRC remainder of a string of bits using a chosen polynomial.
+        If check_value is not used, it returns the crc remainder. 
+        If it is used, the function returns whether the check_value is true. '''
+        
+        # Check data format (change from int to string if necessary)
+        for element in range(len(input_bitstring)):
+            if type(input_bitstring[element]) == int:
+                input_bitstring[element] = format(input_bitstring[element], '08b')
+            if input_bitstring[element][:2] =='0b':
+                input_bitstring[element] = input_bitstring[element][2:]
+        '''# Check input length. If only one byte or 8 bits, add arbitrary byte.
+        if len(input_bitstring) == 1 or len(input_bitstring) == 8:
+            input_bitstring += '0'*8
+        print("Step 2 of CRC:", input_bitstring)'''
+        # Join into single bit string
+        input_bitstring = ''.join(input_bitstring)
+        # Check that our bit string is actually a string of 0s and 1s
+        if (input_bitstring[0] != '0' and input_bitstring[0] != '1'):
+            print("Error with CRC remainder bitstring. This doesn't seem like a bitstring")
+            print("You sent:", input_bitstring)
+            sys.exit()
+
+        # Throw warning for incorrect polynomial divisor
+        if polynomial_bitstring != '100000111':
+            print("Warning: polynomial for CRC division does not match TI ADS1261 datasheet (pg 52).")
+            print("Continuing...")
+
+        polynomial_bitstring = polynomial_bitstring.lstrip('0')
+        len_input = len(input_bitstring)
+        
+        if check_value is None:
+            # add initial padding for division
+            initial_padding = '0' * (len(polynomial_bitstring) - 1)
+        else:
+            # check the value
+            initial_padding = check_value
+        
+        input_padded_array = list(input_bitstring + initial_padding)
+        
+        while '1' in input_padded_array[:len_input]:
+            cur_shift = input_padded_array.index('1')
+            for i in range(len(polynomial_bitstring)):
+                input_padded_array[cur_shift + i] = str(int(polynomial_bitstring[i] != input_padded_array[cur_shift + i]))
+        
+        if check_value is None:
+            return ''.join(input_padded_array)[len_input:]
+        else:
+            return ('1' not in ''.join(input_padded_array)[len_input:])
  
     def mode1(self, CHOP = 'normal', CONVRT = 'continuous', DELAY = '50us'):
         # CHOP = 'normal', 'chop', '2-wire ac-excitation', or '4-wire ac-excitation'
@@ -428,7 +526,7 @@ class ADC1261:
         
     def check_mode1(self):
         read = self.read_register('MODE1')
-        byte_string = list(map(int,format(read,'08b')))
+        byte_string = list(map(int,format(read,'08b')))#; print(byte_string)
         chop_bits = int(''.join(map(str,byte_string[1:3])),2)<<5
         convrt_bits = int(str(byte_string[3]),2)<<4
         CHOP = 'normal' if chop_bits == 0 else self.inv_mode1register[chop_bits]
@@ -516,16 +614,24 @@ class ADC1261:
         
     def check_mode3(self):
         read = self.read_register('MODE3')
-        byte_string = list(map(int,format(read,'08b')))
-        PWDN_status = "Normal" if byte_string[0] == 0 else "Software Power-Down Mode"
-        STATENB_status = "No Status byte" if byte_string[1] == 0 else "Status byte enabled"
-        CRCENB_status = "No CRC" if byte_string[2] == 0 else "CRC enabled"
-        SPITIM_status = "SPI auto-reset disabled" if byte_string[3] == 0 else "SPI auto-reset enabled"
-        GPIO3_status = "Low" if byte_string[4] == 0 else "High"
-        GPIO2_status = "Low" if byte_string[5] == 0 else "High"
-        GPIO1_status = "Low" if byte_string[6] == 0 else "High"
-        GPIO0_status = "Low" if byte_string[7] == 0 else "High"
-        return PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status
+        #~ if len(read) > 1:
+            #~ Note: this assumes CRC is off
+            #~ read = read[2]
+        try:
+            byte_string = list(map(int,format(read,'08b')))
+            PWDN_status = "Normal" if byte_string[0] == 0 else "Software Power-Down Mode"
+            STATENB_status = "No Status byte" if byte_string[1] == 0 else "Status byte enabled"
+            CRCENB_status = "No CRC" if byte_string[2] == 0 else "CRC enabled"
+            SPITIM_status = "SPI auto-reset disabled" if byte_string[3] == 0 else "SPI auto-reset enabled"
+            GPIO3_status = "Low" if byte_string[4] == 0 else "High"
+            GPIO2_status = "Low" if byte_string[5] == 0 else "High"
+            GPIO1_status = "Low" if byte_string[6] == 0 else "High"
+            GPIO0_status = "Low" if byte_string[7] == 0 else "High"
+            return PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status
+        except Exception as e:
+            print(e)
+            print(type(read), read)
+            self.end()
     
     def print_mode3(self):
         PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status = self.check_mode3()
@@ -538,7 +644,7 @@ class ADC1261:
                 "\nGPIO2 Data:", GPIO2_status,
                 "\nGPIO1 Data:", GPIO1_status,
                 "\nGPIO0 Data:", GPIO0_status)
-    
+ 
 
     
                 
@@ -605,6 +711,42 @@ class ADC1261:
         else:
             pass
     
+    def reset(self):
+        self.gpio(command="RESET", status = "low")
+        time.sleep(0.1)
+        self.gpio(command="RESET", status = "high")
+        return 0
+    
+    def syocal(self):
+        # configure the ADC (done elsewhere)
+        # Apply the calibration signal(i.e. connect/short the inputs)
+        print("Please ensure inputs are shorted together")
+        # Take the start pin high
+        self.start1()
+        # Before conversion completion, send the calibration command. Keep CS low
+        syocal_message = [self.commandByte1['SYOCAL'][0], self.arbitrary]
+        #delay for calibration time (Table 14, pg 49, ADS1261 data sheet
+        self.send(syocal_message)
+        return 0
+    
+    def sfocal(self):
+        self.start1()
+        sfocal_message = [self.commandByte1['SFOCAL'][0], self.arbitrary]
+        self.send(sfocal_message)
+        return 0
+    
+    def no_operation(self):
+        
+        nop_message = [self.commandByte1['NOP'][0], self.arbitrary]
+        for item in nop_message:
+            print(type(item), item)        
+        print('')
+        #~ crc_2 = self.crc(input_bitstring = nop_message)
+        #~ nop_message.extend([crc_2,int(self.zero)])
+
+        print(self.send(nop_message))
+
+    
     def stop(self):
         stop_message = [self.commandByte1['STOP'][0], self.arbitrary, self.zero]
         self.send(stop_message)
@@ -615,34 +757,296 @@ class ADC1261:
         self.send(start_message)
         return 0
     
-    def collect_measurement(self, method='software', reference=5000, gain = 1):
+    def trial(self, reference):
+        # self.start1()
+        j = 0
+        tic = time.time()
+        a = self.collect_measurement(method = 'hardware', reference = reference, gain = 1)
+        while(a == -5000):
+                a = self.collect_measurement(method = 'hardware', reference = reference, gain = 1)
+                j += 1
+        toc = time.time()
+#        print("Time in microseconds:", (toc-tic)*1e6)
+#        print("Number of unsuccessful queries:", j)
+#        print("Measured average value (mV):", a)
+        return (toc-tic)*1e6, j, a
+        
+    def status_byte_trial(self):
+        self.stop()
+        self.reset()
+        self.mode2(gpio3_connection = 'connect',
+            gpio2_connection = 'connect',
+            gpio1_connection = 'disconnect',
+            gpio0_connection = 'disconnect',
+            gpio3_direction = 'output',
+            gpio2_direction = 'output',
+            gpio1_direction = 'output',
+            gpio0_direction = 'output')
+        self.mode3(PWDN = 0,
+                STATENB = 1,
+                CRCENB = 0,
+                SPITIM = 0,
+                GPIO3 = 0,
+                GPIO2 = 1,
+                GPIO1 = 0,
+                GPIO0 = 0)
+        self.choose_inputs(positive = 'AIN2', negative = 'AIN3')
+        self.start1()
+        return self.collect_measurement(method = 'hardware', reference = 5000, gain = 1, status = 'enabled')
+        
+
+    def register_speed_trial(self):
+        repeats = 100000
+        self.stop()
+        start = time.time()
+        for i in range(repeats):
+            #~ self.stop()
+            self.set_frequency(data_rate = 20, print_freq = False)
+            #~ self.start1()
+        time_per_trial = (time.time() - start)/repeats
+        print("Time per trial (us):", time_per_trial*1000000)
+        print("Maximum rate (Hz):", 1/time_per_trial)
+        return 0
+        
+    def calculate_reference(self, no_samples = 20):
+        self.setup_measurements()
+        all_samples = []
+        analog_supply = self.power_readback(); 
+        #~ print("AVDD - AVSS (mV):", analog_supply)
+        #~ analog_supply = 5080
+        self.reference_config(reference_enable = 1)
+        self.mode1(); self.mode2(); self.mode3()
+        #~ self.print_reference_config()
+        #~ self.mode1(CHOP = '4-wire ac-excitation')
+#        self.print_mode1()
+        self.mode2(gpio2_direction = 'output', gpio3_direction = 'output',
+                   gpio2_connection = 'connect', gpio3_connection = 'connect')
+        self.mode3(PWDN = 0,
+            STATENB = 0,
+            CRCENB = 0,
+            SPITIM = 0,
+            GPIO3 = 0,
+            GPIO2 = 1,
+            GPIO1 = 0,
+            GPIO0 = 0)
+        
+        self.choose_inputs(positive = 'AIN0', negative = 'AIN1')
+        self.PGA()
+        
+        self.start1()
+        while(len(all_samples) < no_samples):
+           all_samples.append(self.collect_measurement(method = 'hardware', 
+                                reference = analog_supply, gain = 1))
+                                
+        all_samples = np.array(all_samples)
+        #~ print(all_samples)
+        reference = np.average(np.absolute(all_samples))
+        return reference
+        
+    def ac_simple(self, measurement_type = 'DC'):
+        ''' Frequency removed for easier change in other areas of future code. '''
+        
+        #~ print("AVDD to AVSS (mV):", self.power_readback())
+        #~ print("AIN0 to AIN1 (mV):", external_reference)
+        self.setup_measurements()
+        self.stop()
+        # Reset device
+        self.reset()
+        self.set_frequency(data_rate = 14400, digital_filter = 'sinc1', print_freq = False)
+        external_reference = self.calculate_reference()
+        self.stop()
+        self.reset()
+        # clear status register
+        #~ self.clear_status()
+        
+        # WREG 2.5 SPS, sinc4
+        #~ self.set_frequency(data_rate = 1200, digital_filter = 'sinc4', print_freq = False)
+        
+        if measurement_type == 'AC':
+            # WREG 4-wire ac-excitation (toggle on)
+            self.mode1(CHOP = '4-wire ac-excitation', CONVRT = 'continuous', DELAY = '50us')
+            # WREG select AIN 0 & 1 as external references (toggle on)
+            self.mode3(PWDN = 0,
+                STATENB = 1,
+                CRCENB = 0,
+                SPITIM = 0,
+                GPIO3 = 0,
+                GPIO2 = 0,
+                GPIO1 = 0,
+                GPIO0 = 0)
+            self.reference_config(reference_enable = 0, RMUXP = 'AIN0', RMUXN = 'AIN1')
+            reference = external_reference
+            
+        elif measurement_type == 'DC':
+            # WREG 4-wire ac-excitation (toggle off)
+            self.mode1(CHOP = 'normal', CONVRT = 'continuous', DELAY = '50us')
+            # WREG hold GPIO 2 high (for +5 V)
+            self.mode3(PWDN = 0,
+                STATENB = 1,
+                CRCENB = 0,
+                SPITIM = 0,
+                GPIO3 = 0,
+                GPIO2 = 1,
+                GPIO1 = 0,
+                GPIO0 = 0)
+            # WREG select AIN 0 & 1 as external references (toggle off)         
+            self.reference_config(reference_enable = 1, RMUXP = 'AVDD', RMUXN = 'AVSS')
+            reference = self.power_readback()
+        else:
+            print('The measurement_type was not "AC" or "DC"')
+        
+        # WREG connect GPIOs 2 & 3 (AIN 4 & 5)
+        self.mode2(gpio3_connection = 'connect',
+            gpio2_connection = 'connect',
+            gpio1_connection = 'disconnect',
+            gpio0_connection = 'disconnect',
+            gpio3_direction = 'output',
+            gpio2_direction = 'output',
+            gpio1_direction = 'output',
+            gpio0_direction = 'output')
+        
+        # self.mode3() # - set registers to default
+        # check status byte?
+        #~ self.print_status()
+        print('')
+        return external_reference
+        
+    def test_gain(self):
+        gains = [1,2,4,8,16,32,64,128]
+        for gain in gains:
+            self.clear_status()
+            self.ac_test_all(gain = gain)
+            self.print_status()
+
+    def ac_test_all(self, gain):
+        external_reference = self.ac_simple('AC')
+        self.PGA(BYPASS = 0, GAIN = gain)
+        self.print_PGA()
+        # set all potential pairs
+        terminals = ['AIN2', 'AIN3', 'AIN6', 'AIN7', 'AIN8', 'AIN9']
+        #~ print("Number of terminals:", len(terminals))
+        for j in range(len(terminals)-1):
+            self.stop()
+            self.choose_inputs(positive = terminals[j], negative = terminals[j+1])
+            self.start1()
+            samples = []
+            for i in range(1,10):
+                samples.append(self.collect_measurement(method='hardware', 
+                reference=external_reference, gain = gain))
+            print("Positive:", terminals[j], "Negative:", terminals[j+1], "-", np.median(samples), "mV")
+        return 0
+    
+    def status(self, status_byte):
+        PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status = status_byte
+        return 0
+        
+    def maximum_gain(self, positive_input = 'AIN2', negative_input = 'AIN3', positive_reference = 'AIN0', negative_reference = 'AIN1', excitation_source = 'internal'):
+        ''' Calculates the maximum gain between a pair of inputs.
+            Intended for use with external references where the external reference
+            or the inputs are likely to be clipped. '''
+        self.setup_measurements()
+        self.stop()
+        self.reset()
+        #~ self.set_frequency(data_rate = 1200, digital_filter = 'sinc2')
+        external_reference = self.calculate_reference()
+        #~ print("External reference (mV):", external_reference) # for diagnostics only.
+        
+        if excitation_source == 'internal':
+            self.mode2(gpio3_connection = 'connect',
+                gpio2_connection = 'connect',
+                gpio1_connection = 'disconnect',
+                gpio0_connection = 'disconnect',
+                gpio3_direction = 'output',
+                gpio2_direction = 'output',
+                gpio1_direction = 'output',
+                gpio0_direction = 'output')
+            
+            self.mode3(STATENB = 1,
+                    GPIO3 = 0,
+                    GPIO2 = 1)
+        
+        PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status = self.check_mode3()
+        if STATENB_status == "No Status byte":
+            self.mode3(PWDN = PWDN_status,
+                    STATENB = 1,
+                    CRCENB = CRCENB_status,
+                    SPITIM = SPITIM_status,
+                    GPIO3 = GPIO3_status,
+                    GPIO2 = GPIO2_status,
+                    GPIO1 = GPIO1_status,
+                    GPIO0 = GPIO0_status)
+                    
+        status_byte = "enabled"
+        # set external reference
+        self.reference_config(RMUXP = positive_reference, RMUXN = negative_reference)
+        self.choose_inputs(positive = positive_input, negative = negative_input)
+        # try gain of 1 - 128, stop when there is a PGA alarm
+        gains = [1,2,4,8,16,32,64,128]
+        for previous_gain, gain in zip(gains, gains[1:]):
+            self.stop()
+            self.PGA(BYPASS = 0, GAIN = gain)
+            #~ self.print_PGA()
+            self.start1()
+            result = self.collect_measurement(method = 'hardware', reference = external_reference, gain = gain, status = 'enabled')
+            #~ print("Raw result:", result)
+            if type(result) != float:
+                return previous_gain
+        return gains[-1]
+    
+
+    def collect_measurement(self, method='software', reference=5000, gain = 1, status = 'disabled', crc = 'disabled', bits = False):
         #~ Choose to use hardware or software polling (pg 51 & 79 of ADS1261 datasheet) 
         #~ Based on Figure 101 in ADS1261 data sheet
-        DRDY_status = 'none'
         i = 0
-        rdata = [self.commandByte1['RDATA'][0],0,0,0,0,0,0]
+        rdata = [self.commandByte1['RDATA'][0],0,0,0,0,0,0,0,0]
+        self.start1() # remove this if necessary.
         if method.lower() == 'hardware':
-            if i > 1000: self.end()
-            try:
-                if GPIO.input(self.drdy):
-                    pass
-                else:
-                    read = self.send(rdata)
-                    response = self.convert_to_mV(read[2:5], reference = reference, gain = gain) # commenting here improves data rate by 400%
-                    if response not in [None, 'None']:
-                        response = float(response)
-                        return response
+            response = -1
+            while response == -1:
+                if i > 1000: print("Have you run start1()?"); self.end()
+                try:
+                    if GPIO.input(self.drdy): rdata_status = True # set flag to show measurements were taking place
+                    if not GPIO.input(self.drdy) and rdata_status == True: # must have been previously getting conversions and is now low
+                        rdata_status = False # show we've just read it. Prevents old conversions coming through - maybe?
+                        read = self.send(rdata)
+                        #~ print(read) # remember to remove this!
+                        if status != 'disabled' and crc == 'disabled':
+                            #~ print("Status enabled, CRC-2 disabled")
+                            status_byte = format(read[2], '08b')
+                            #~ print("Status byte (low & high):", status_byte[2], status_byte[3], status_byte)
+                            if status_byte[2] == 1 or status_byte[3] == 1 or read[3:6] == [127,255,255] or read[3:6] == [128,0,0]:
+                                return "Error. PGA alarm."
+                            else:
+                                response = self.convert_to_mV(read[3:6], reference = reference, gain = gain)
+                        elif status == 'disabled' and crc == 'disabled':
+                            response = self.convert_to_mV(read[2:5], reference = reference, gain = gain)
+                        elif status != 'disabled' and crc != 'disabled':
+                            out_crc2, status_byte = read[3], format(read[2], '08b')
+                            response = self.convert_to_mV(read[5:8], reference = reference, gain = gain)
+                            out_crc3 = read[8]
+                        elif status == 'disabled' and crc != 'disabled':
+                            out_crc2 = read[3]
+                            response = self.convert_to_mV(read[4:7], reference = reference, gain = gain)
+                            out_crc3 = read[8]
+                        else:
+                            print("Error in collect_measurement - status or crc not 'disabled'.")
+                        if response not in [None, 'None']:
+                            response = float(response)
+                            return response
+                        else:
+                            response = -1        
                     else:
-                        #~ response = 0
-                        pass
-            except KeyboardInterrupt:
-                self.end()
-            except: 
-                print("Wow! No new conversion??", i)
-                i+=1
-                pass
-
+                        response = -1
+                                                                          
+                except KeyboardInterrupt:
+                    self.end()
+                except: 
+                    #~ print("Wow! No new conversion??", i)
+                    i+=1
+                    pass
+                #~ i += 1
         elif method.lower() == 'software':
+            DRDY_status = 'not new'
             while DRDY_status.lower() != 'new':
                 if i > 1000: self.end()
                 try:
@@ -667,9 +1071,7 @@ class ADC1261:
     def convert_to_mV(self, array, reference = 5000, gain = 1):
         # Only for use without CRC checking!!
         #use twos complement online to check
-        MSB = array[0]
-        MID = array[1]
-        LSB = array[2]
+        MSB, MID, LSB = array
         bit24 = (MSB<<16)+(MID<<8)+LSB
         if MSB>127: # i.e. signed negative
             bits_from_fullscale = (2**24-bit24)
@@ -983,29 +1385,32 @@ class ADC1261:
         plt.tight_layout()
         print("plotting...")
         plt.show()
-        
+    
     def check_temperature(self):
         # Table 7.5: Electrical Characteristics 
         # When the internal temperature is 25 deg C, the output is 122.4 mV. 
         # The temperature coefficient is 0.42 mV/C.
-        
+        power = self.power_readback()
+        self.reset()
         # Turn PGA on with gain = 1
-        self.PGA(BYPASS=0, GAIN = int(1))
+        #~ self.PGA(BYPASS=0, GAIN = int(1))
         # Burn-out current sources disabled
-        self.burn_out_current_source(VBIAS = 'disabled', polarity = 'pull-up mode', magnitude = 'off')
+        #~ self.burn_out_current_source(VBIAS = 'disabled', polarity = 'pull-up mode', magnitude = 'off')
         # AC-excitation mode disabled
-        
         self.choose_inputs(positive = 'INTEMPSENSE', negative = 'INTEMPSENSE')
+        
         self.start1()
         response = 'none'
         i = 0
         while(type(response) != float and i < 1000):
             try:
-                response = self.collect_measurement(method='hardware', reference = 5000, gain = 1)
+                response = self.collect_measurement(method='hardware', reference = power, gain = 1)
                 i += 1
             except KeyboardInterrupt:
                 self.end()
-        temperature = (response - 111.9)/0.42
+        #~ temperature = (response - 111.9)/0.42
+        #~ print("Temperature (mV):", response)
+        temperature = (response - 122.4)/0.42+25
         return temperature
         
     def current_out_magnitude(self, current1 = 'off', current2 = 'off'):
@@ -1028,7 +1433,7 @@ class ADC1261:
         IMUX2 = str(IMUX2).upper()
         if IMUX1 == IMUX2 and IMUX1 != 'NONE':
             print("IMUX1 and IMUX2 are both the same pin. They must either be different output pins, or both be 'NONE'.")
-            adc.end()
+            self.end()
         if IMUX1 in self.OUTPMUXregister:
             if IMUX2 in self.OUTPMUXregister:
                 IMUX2_bits = int(self.OUTPMUXregister[IMUX2]<<4)
@@ -1038,10 +1443,10 @@ class ADC1261:
                 self.write_register('IMUX', message)
             else:
                 print("IMUX2 value not available.\nYou requested '" + IMUX2 + "' but only "+str(list(self.OUTPMUXregister.keys()))+" are available.")
-                adc.end()
+                self.end()
         else:
             print("IMUX1 value not available.\nYou requested '" + IMUX1 + "' but only "+str(list(self.OUTPMUXregister.keys()))+" are available.")
-            adc.end()
+            self.end()
     
         return IMUX1, IMUX2
         
@@ -1066,11 +1471,19 @@ class ADC1261:
         return current1, IMUX1, current2, IMUX2
         
     def power_readback(self, power = 'analog'):
+        ''' Returns the power between AVDD & AVSS or DVDD & DVSS in mV. 
+        Power can be 'analog' or 'digital'. '''
+        self.setup_measurements()
+        data_rate, digital_filter = self.check_frequency(print_freq = False)
         # Turn PGA on with gain = 1
         self.PGA(BYPASS=0, GAIN = int(1))
         # Burn-out current sources disabled
         self.burn_out_current_source(VBIAS = 'disabled', polarity = 'pull-up mode', magnitude = 'off')
         # AC-excitation mode disabled
+        self.mode1(); self.mode2(); self.mode3()
+        self.reference_config(reference_enable = 1, RMUXP = 'Internal Positive', RMUXN = 'Internal Negative')
+        #~ self.reference_config(reference_enable = 1, RMUXP = 'AVDD', RMUXN = 'AVSS')
+#        self.print_reference_config()
         
         # Declare the pins
         if power == 'analog':
@@ -1078,18 +1491,30 @@ class ADC1261:
         else:
             self.choose_inputs(positive = 'INTDV4', negative = 'INTDV4')
         
+        self.set_frequency(data_rate = 7200, digital_filter = 'sinc1', print_freq = False)
+        
         # Measure the potential
         self.start1()
-        response = 'none'
-        i = 0
-        while(type(response) != float and i < 1000 or response == None):
+        response = None
+        error = 0
+        samples = []
+        
+        while(type(response) != float and error < 1000 and len(samples) < 10):
             try:
-                response = self.collect_measurement(method='hardware', reference = 5000, gain = 1)
-                i += 1
-                if type(response) == float and response != None: return response*4
+                response = self.collect_measurement(method='hardware', reference = 2500, gain = 1)
+                
+                if type(response) == float and response != None:
+#                    print(response, type(response), len(samples))
+                    samples.append(response*4)
+                response = None
             except KeyboardInterrupt:
                 self.end()
-    
+            except:
+                error += 1
+        # return to previous frequency and filter
+        self.set_frequency(data_rate = data_rate, digital_filter = digital_filter, print_freq = False)
+        return np.median(samples)
+  
     def burn_out_current_source(self, VBIAS = 'disabled', polarity = 'pull-up mode', magnitude = '200na'):  
         # pass lower case string variables only to dictionaries
         VBIAS = str(VBIAS).lower()
@@ -1137,7 +1562,10 @@ class ADC1261:
         return Vbias, polarity, magnitude
     
     def end(self):
-        self.stop()
+        try:
+            self.stop()
+        except Exception as e:
+            print(e)
         self.spi.close()
         GPIO.cleanup() # Resets all GPIO pins to GPIO.INPUT (prevents GPIO.OUTPUT being left high and short-circuiting).
         print("\nSPI closed. GPIO cleaned up. System exited.")
@@ -1166,6 +1594,13 @@ def main():
     
     # Set pins, Check for external clock, DRDY pin check, Set start pin low
     adc.setup_measurements()
+    
+    adc.ac_excitation_2_wire_example()
+    # Other stuff beyond here.
+    adc.end()
+    
+    
+    
     # Configure and verify ADC settings
     DeviceID, RevisionID = adc.check_ID()
     #~ adc.choose_inputs(positive = 'AIN8', negative = 'AIN9')
