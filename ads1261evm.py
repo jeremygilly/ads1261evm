@@ -878,6 +878,7 @@ class ADC1261:
             reference = external_reference
             
         elif measurement_type == 'DC':
+            reference = self.power_readback()
             # WREG 4-wire ac-excitation (toggle off)
             self.mode1(CHOP = 'normal', CONVRT = 'continuous', DELAY = '50us')
             # WREG hold GPIO 2 high (for +5 V)
@@ -891,7 +892,7 @@ class ADC1261:
                 GPIO0 = 0)
             # WREG select AIN 0 & 1 as external references (toggle off)         
             self.reference_config(reference_enable = 1, RMUXP = 'AVDD', RMUXN = 'AVSS')
-            reference = self.power_readback()
+            
         else:
             print('The measurement_type was not "AC" or "DC"')
         
