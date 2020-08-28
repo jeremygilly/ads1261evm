@@ -5,7 +5,7 @@
 
 # Author: Jeremy Gillbanks
 # First updated: 19 July 2019
-# Last updated: 05 August 2019
+# Last updated: 28 April 2020
 
 # Testing:
 # Keithley 2636B Source Measurement Unit: 1.225900 V
@@ -195,6 +195,7 @@ class ADC1261:
         ('17.8ms', int('1101',2))
     })
     
+    # Constant current options:
     IMAG_register = dict({
         ('off', int('0000',2)),
         ('50', int('0001',2)),
@@ -849,13 +850,13 @@ class ADC1261:
         #~ print("AVDD to AVSS (mV):", self.power_readback())
         #~ print("AIN0 to AIN1 (mV):", external_reference)
         self.setup_measurements()
-        self.stop()
+        # self.stop()
         # Reset device
-        self.reset()
-        self.set_frequency(data_rate = 14400, digital_filter = 'sinc1', print_freq = False)
-        external_reference = self.calculate_reference()
-        self.stop()
-        self.reset()
+        # self.reset()
+        # self.set_frequency(data_rate = 14400, digital_filter = 'sinc1', print_freq = False)
+        # external_reference = self.calculate_reference()
+        # self.stop()
+        # self.reset()
         # clear status register
         #~ self.clear_status()
         
@@ -1016,6 +1017,7 @@ class ADC1261:
                             status_byte = format(read[2], '08b')
                             #~ print("Status byte (low & high):", status_byte[2], status_byte[3], status_byte)
                             if status_byte[2] == 1 or status_byte[3] == 1 or read[3:6] == [127,255,255] or read[3:6] == [128,0,0]:
+                                #~ print("Error. PGA Alarm.")
                                 return "Error. PGA alarm."
                             else:
                                 response = self.convert_to_mV(read[3:6], reference = reference, gain = gain)
@@ -1074,11 +1076,15 @@ class ADC1261:
         #use twos complement online to check
         MSB, MID, LSB = array
         bit24 = (MSB<<16)+(MID<<8)+LSB
+        #~ print("bit24:", bit24)
         if MSB>127: # i.e. signed negative
             bits_from_fullscale = (2**24-bit24)
+            #~ print(bits_from_fullscale, reference, gain)
             mV = -bits_from_fullscale*reference/(gain*2**23)
+            #~ print(mV)
         else:
             mV = bit24*reference/(gain*2**23)
+        #~ print("mV:", mV)
         return mV
             
     def check_noise(self, filename, digital_filter='FIR'):
@@ -1415,10 +1421,14 @@ class ADC1261:
         return temperature
         
     def current_out_magnitude(self, current1 = 'off', current2 = 'off'):
+        # The internal reference MUST be enabled for this function to work!!
+        p,n = self.check_reference_config()[-2:]
+        self.reference_config(1, p,n)
+        print("Internal 2.5 V reference enabled for current output, per 9.3.6 in datasheet.")
         # current must be in uA
         current1 = str(current1)
         current2 = str(current2)
-        if current1 in self.IMAG_register and current2 in self.IMAG_register:
+        if (current1 in self.IMAG_register) and (current2 in self.IMAG_register):
             current2_IMAG = int(self.IMAG_register[current2]<<4)
             current1_IMAG = int(self.IMAG_register[current1])
             bits = current2_IMAG + current1_IMAG
@@ -1434,7 +1444,10 @@ class ADC1261:
         IMUX2 = str(IMUX2).upper()
         if IMUX1 == IMUX2 and IMUX1 != 'NONE':
             print("IMUX1 and IMUX2 are both the same pin. They must either be different output pins, or both be 'NONE'.")
-            self.end()
+            # self.end()
+        p,n = self.check_reference_config()[-2:]
+        self.reference_config(1, p,n)
+        #~ print("Internal 2.5 V reference enabled for current output.")
         if IMUX1 in self.OUTPMUXregister:
             if IMUX2 in self.OUTPMUXregister:
                 IMUX2_bits = int(self.OUTPMUXregister[IMUX2]<<4)
