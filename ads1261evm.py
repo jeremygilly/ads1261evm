@@ -427,18 +427,26 @@ class ADC1261:
     def check_status(self):
         read = self.read_register('STATUS')
         byte_string = list(map(int,format(read,'08b')))
-        LOCK_status = "Unlocked" if byte_string[0] == 0 else "Locked"
-        CRCERR_status = "No CRC error." if byte_string[1] == 0 else "CRC Error"
-        PGAL_ALM_status = "No alarm" if byte_string[2] == 0 else "Alarm"
-        PGAH_ALM_status = "No alarm" if byte_string[3] == 0 else "Alarm"
-        REFL_ALM_status = "No alarm" if byte_string[4] == 0 else "Alarm"
-        DRDY_status = "Not new" if byte_string[5] == 0 else "New"
-        CLOCK_status = "Internal" if byte_string[6] == 0 else "External"
-        RESET_status = "No reset" if byte_string[7] == 0 else "Reset"
+        LOCK_status = 0 if byte_string[0] == 0 else 1
+        CRCERR_status = 0 if byte_string[1] == 0 else 1
+        PGAL_ALM_status = 0 if byte_string[2] == 0 else 1
+        PGAH_ALM_status = 0 if byte_string[3] == 0 else 1
+        REFL_ALM_status = 0 if byte_string[4] == 0 else 1
+        DRDY_status = 0 if byte_string[5] == 0 else 1
+        CLOCK_status = 0 if byte_string[6] == 0 else 1
+        RESET_status = 0 if byte_string[7] == 0 else 1
         return LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status
         
     def print_status(self):
         LOCK_status, CRCERR_status, PGAL_ALM_status, PGAH_ALM_status, REFL_ALM_status, DRDY_status, CLOCK_status, RESET_status = self.check_status()
+        LOCK_status = "Unlocked" if LOCK_status == 0 else "Locked"
+        CRCERR_status = "No CRC error." if CRCERR_status == 0 else "CRC Error"
+        PGAL_ALM_status = "No alarm" if PGAL_ALM_status == 0 else "Alarm"
+        PGAH_ALM_status = "No alarm" if PGAH_ALM_status == 0 else "Alarm"
+        REFL_ALM_status = "No alarm" if REFL_ALM_status == 0 else "Alarm"
+        DRDY_status = "Not new" if DRDY_status == 0 else "New"
+        CLOCK_status = "Internal" if CLOCK_status == 0 else "External"
+        RESET_status = "No reset" if RESET_status == 0 else "Reset"
         print("\n *** Status Register Check: ***"
                 "\nRegister lock status:", LOCK_status, 
                 "\nCRC Error:", CRCERR_status,
@@ -620,14 +628,14 @@ class ADC1261:
             #~ read = read[2]
         try:
             byte_string = list(map(int,format(read,'08b')))
-            PWDN_status = "Normal" if byte_string[0] == 0 else "Software Power-Down Mode"
-            STATENB_status = "No Status byte" if byte_string[1] == 0 else "Status byte enabled"
-            CRCENB_status = "No CRC" if byte_string[2] == 0 else "CRC enabled"
-            SPITIM_status = "SPI auto-reset disabled" if byte_string[3] == 0 else "SPI auto-reset enabled"
-            GPIO3_status = "Low" if byte_string[4] == 0 else "High"
-            GPIO2_status = "Low" if byte_string[5] == 0 else "High"
-            GPIO1_status = "Low" if byte_string[6] == 0 else "High"
-            GPIO0_status = "Low" if byte_string[7] == 0 else "High"
+            PWDN_status = 0 if byte_string[0] == 0 else 1
+            STATENB_status = 0 if byte_string[1] == 0 else 1
+            CRCENB_status = 0 if byte_string[2] == 0 else 1
+            SPITIM_status = 0 if byte_string[3] == 0 else 1
+            GPIO3_status = 0 if byte_string[4] == 0 else 1
+            GPIO2_status = 0 if byte_string[5] == 0 else 1
+            GPIO1_status = 0 if byte_string[6] == 0 else 1
+            GPIO0_status = 0 if byte_string[7] == 0 else 1
             return PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status
         except Exception as e:
             print(e)
@@ -636,6 +644,14 @@ class ADC1261:
     
     def print_mode3(self):
         PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status = self.check_mode3()
+        PWDN_status = "Normal" if PWDN_status == 0 else "Software Power-Down Mode"
+        STATENB_status = "No Status byte" if STATENB_status == 0 else "Status byte enabled"
+        CRCENB_status = "No CRC" if CRCENB_status else "CRC enabled"
+        SPITIM_status = "SPI auto-reset disabled" if SPITIM_status == 0 else "SPI auto-reset enabled"
+        GPIO3_status = "Low" if GPIO3_status == 0 else "High"
+        GPIO2_status = "Low" if GPIO2_status == 0 else "High"
+        GPIO1_status = "Low" if GPIO1_status == 0 else "High"
+        GPIO0_status = "Low" if GPIO0_status == 0 else "High"
         print("\n *** Mode 3 Register Check:*** "
                 "\nSoftware Power-down mode:", PWDN_status,
                 "\nSTATUS byte:", STATENB_status,
@@ -659,12 +675,13 @@ class ADC1261:
     def check_PGA(self):
         read = self.read_register('PGA')
         byte_string = list(map(int,format(read,'08b')))
-        BYPASS_status = "PGA mode" if byte_string[0] == 0 else "PGA Bypass"
+        BYPASS_status = 0 if byte_string[0] == 0 else 1
         gain = self.inv_available_gain[int(''.join(map(str,byte_string[5:])),2)]
         return BYPASS_status, gain
     
     def print_PGA(self):
         BYPASS_status, gain = self.check_PGA()
+        BYPASS_status = "PGA mode" if BYPASS_status == 0 else "PGA Bypass"
         print("\n *** PGA Register Check: ***"
                 "\nPGA Bypass Mode:", BYPASS_status,
                 "\nGain:", gain)
@@ -682,13 +699,14 @@ class ADC1261:
     def check_reference_config(self):
         read = self.read_register('REF')
         byte_string = list(map(int,format(read,'08b')))
-        ref_enable_status = "Disabled" if byte_string[3] == 0 else "Enabled"
+        ref_enable_status = 0 if byte_string[3] == 0 else 1
         RMUXP_status = self.inv_available_reference[int(''.join(map(str,byte_string[4:6])),2)<<2]
         RMUXN_status = self.inv_available_reference[int(''.join(map(str,byte_string[6:])),2)]
         return ref_enable_status, RMUXP_status, RMUXN_status
     
     def print_reference_config(self):
         ref_enable_status, RMUXP_status, RMUXN_status = self.check_reference_config()
+        ref_enable_status = "Disabled" if ref_enable_status == 0 else "Enabled"
         print("\n *** Reference Configuration Check: ***"
                 "\nInternal Reference Enable:", ref_enable_status,
                 "\nReference Positive Input:", RMUXP_status,
@@ -1017,7 +1035,7 @@ class ADC1261:
                             status_byte = format(read[2], '08b')
                             #~ print("Status byte (low & high):", status_byte[2], status_byte[3], status_byte)
                             if status_byte[2] == 1 or status_byte[3] == 1 or read[3:6] == [127,255,255] or read[3:6] == [128,0,0]:
-                                #~ print("Error. PGA Alarm.")
+                                print("Error. PGA Alarm.", self.check_status())
                                 return "Error. PGA alarm."
                             else:
                                 response = self.convert_to_mV(read[3:6], reference = reference, gain = gain)
@@ -1397,13 +1415,26 @@ class ADC1261:
         # Table 7.5: Electrical Characteristics 
         # When the internal temperature is 25 deg C, the output is 122.4 mV. 
         # The temperature coefficient is 0.42 mV/C.
-        power = self.power_readback()
-        self.reset()
+        #~ power = self.power_readback()
+        # self.reset()
         # Turn PGA on with gain = 1
-        #~ self.PGA(BYPASS=0, GAIN = int(1))
+        BYPASS_status, gain = self.check_PGA()
+        self.PGA(BYPASS=0, GAIN = int(1))
+        
         # Burn-out current sources disabled
-        #~ self.burn_out_current_source(VBIAS = 'disabled', polarity = 'pull-up mode', magnitude = 'off')
+        Vbias, polarity, magnitude = self.check_burn_out_current_source()
+        self.burn_out_current_source(VBIAS = 'disabled', polarity = 'pull-up mode', magnitude = 'off')
+        
         # AC-excitation mode disabled
+        CHOP, CONVRT, DELAY = self.check_mode1()
+        self.mode1()
+        PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status = self.check_mode3()
+        self.mode3()
+
+        ref_enable_status, RMUXP_status, RMUXN_status = self.check_reference_config()
+        self.reference_config()
+        
+        #Select relevant inputs
         self.choose_inputs(positive = 'INTEMPSENSE', negative = 'INTEMPSENSE')
         
         self.start1()
@@ -1411,16 +1442,31 @@ class ADC1261:
         i = 0
         while(type(response) != float and i < 1000):
             try:
-                response = self.collect_measurement(method='hardware', reference = power, gain = 1)
+                response = self.collect_measurement(method='hardware', reference = 5000, gain = 1)
                 i += 1
             except KeyboardInterrupt:
                 self.end()
         #~ temperature = (response - 111.9)/0.42
         #~ print("Temperature (mV):", response)
         temperature = (response - 122.4)/0.42+25
+        
+        # Reinstate previous settings
+        # Burn out current source
+        self.burn_out_current_source(Vbias, polarity, magnitude)
+        
+        # Programmable gain amplifier settings
+        self.PGA(BYPASS_status, gain)
+        
+        # AC-excitation setings
+        self.mode1(CHOP, CONVRT, DELAY)
+        self.mode3(PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status)
+        
+        # Reference configuration (internal reference, etc)
+        self.reference_config(ref_enable_status, RMUXP_status, RMUXN_status)
         return temperature
         
     def current_out_magnitude(self, current1 = 'off', current2 = 'off'):
+        #print("Current magnitude activated")
         # The internal reference MUST be enabled for this function to work!!
         p,n = self.check_reference_config()[-2:]
         self.reference_config(1, p,n)
@@ -1435,11 +1481,16 @@ class ADC1261:
             message = format(bits,'08b')
             self.write_register('IMAG', message)
         else:
-            print("IMAG value not available.\nYou requested '" + current + "' but only "+str(list(self.IMAG_register.keys()))+" are available.")
+            if (current1 not in self.IMAG_register):
+                print("IMAG value not available.\nYou requested",current1,"but only",str(list(self.IMAG_register.keys())),"are available in uA.")
+            elif (current2 not in self.IMAG_register):
+                print("IMAG value not available.\nYou requested",current2,"but only",str(list(self.IMAG_register.keys())),"are available in uA.")
+            self.end()
         
         return current1, current2
     
     def current_out_pin(self, IMUX1 = 'NONE', IMUX2 = 'NONE'):
+        #print("Current pin activated")
         IMUX1 = str(IMUX1).upper()
         IMUX2 = str(IMUX2).upper()
         if IMUX1 == IMUX2 and IMUX1 != 'NONE':
@@ -1557,10 +1608,10 @@ class ADC1261:
         polarity = polarity << 3
         register_data = bin(VBIAS + polarity + magnitude)
         self.write_register('INPBIAS', register_data)
-        Vbias, polarity, magnitude = self.burn_out_current_source_check()
+        Vbias, polarity, magnitude = self.check_burn_out_current_source()
         return Vbias, polarity, magnitude
         
-    def burn_out_current_source_check(self, print_data = False):
+    def check_burn_out_current_source(self, print_data = False):
         read = self.read_register('INPBIAS')
         byte_string = list(map(int,format(read,'08b')))
         if byte_string[3] == 0: Vbias = 'disabled'
@@ -1685,7 +1736,7 @@ def main():
     #~ print(current1, IMUX1, current2, IMUX2)
     
     #~ adc.burn_out_current_source(VBIAS = 'disabled', polarity = 'pull-down mode', magnitude = 'off')
-    #~ adc.burn_out_current_source_check()
+    #~ adc.check_burn_out_current_source()
     
     # End
     adc.end()
