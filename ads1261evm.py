@@ -646,7 +646,7 @@ class ADC1261:
         PWDN_status, STATENB_status, CRCENB_status, SPITIM_status, GPIO3_status, GPIO2_status, GPIO1_status, GPIO0_status = self.check_mode3()
         PWDN_status = "Normal" if PWDN_status == 0 else "Software Power-Down Mode"
         STATENB_status = "No Status byte" if STATENB_status == 0 else "Status byte enabled"
-        CRCENB_status = "No CRC" if CRCENB_status else "CRC enabled"
+        CRCENB_status = "No CRC" if CRCENB_status == 0 else "CRC enabled"
         SPITIM_status = "SPI auto-reset disabled" if SPITIM_status == 0 else "SPI auto-reset enabled"
         GPIO3_status = "Low" if GPIO3_status == 0 else "High"
         GPIO2_status = "Low" if GPIO2_status == 0 else "High"
@@ -1017,6 +1017,7 @@ class ADC1261:
     def collect_measurement(self, method='software', reference=5000, gain = 1, status = 'disabled', crc = 'disabled', bits = False):
         #~ Choose to use hardware or software polling (pg 51 & 79 of ADS1261 datasheet) 
         #~ Based on Figure 101 in ADS1261 data sheet
+        #~ print(method, reference, gain, status, crc, bits)
         i = 0
         rdata = [self.commandByte1['RDATA'][0],0,0,0,0,0,0,0,0]
         self.start1() # remove this if necessary.
@@ -1438,6 +1439,7 @@ class ADC1261:
         self.choose_inputs(positive = 'INTEMPSENSE', negative = 'INTEMPSENSE')
         
         self.start1()
+        #~ time.sleep(0.1)
         response = 'none'
         i = 0
         while(type(response) != float and i < 1000):
@@ -1463,6 +1465,7 @@ class ADC1261:
         
         # Reference configuration (internal reference, etc)
         self.reference_config(ref_enable_status, RMUXP_status, RMUXN_status)
+        #~ time.sleep(0.1)
         return temperature
         
     def current_out_magnitude(self, current1 = 'off', current2 = 'off'):
