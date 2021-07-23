@@ -45,13 +45,13 @@ def picture_check(AVSS, AVDD, Vain_P, Vain_N, gain):
 differential_voltages = [114.48,122.29,224.53,89.77,52.68,95.86*100e-6*1.5]
 differential_voltages[:] = [x/1000 for x in differential_voltages]
 
-absolute_voltages = []
 I = 100e-6
 R = 20e3
 Vref = I*R
-for i in range(len(differential_voltages)):
-	absolute_voltages.append(Vref+sum(differential_voltages[i:]))
-
+absolute_voltages = [
+    Vref + sum(differential_voltages[i:])
+    for i in range(len(differential_voltages))
+]
 #~ print(differential_voltages)
 #~ print(absolute_voltages)
 #~ import sys

@@ -296,7 +296,7 @@ class ADC1261:
         Returns the value in the read register.'''
         register_location = register_location.upper()
         hex_message = [self.commandByte1['RREG'][0]+self.registerAddress[register_location], self.arbitrary]
-        if CRC == None:
+        if CRC is None:
             # Assume the CRC is off.
             #~ print("Assuming CRC is off")
             #~ read_message = hex_message + [self.crc(hex_message)] + [self.zero]*8
@@ -324,8 +324,6 @@ class ADC1261:
             returnedMessage = self.send(hex_message=read_message)
             return returnedMessage[2]
             #~ print("Returned message:", returnedMessage)
-        elif CRC.lower() == 'on':
-            pass
             
     
             #~ if :
@@ -339,18 +337,12 @@ class ADC1261:
         # expects to see register_data as a binary string
         if not isinstance(register_data, str):
             register_data = format(register_data,'08b')
-        
+
         hex_message = [self.commandByte1['WREG'][0]+self.registerAddress[register_location],int(register_data,2),0,0,0]
         #~ read_message = hex_message + [self.crc(hex_message)] + [self.zero]*1
         read_message = hex_message
         #~ print("WREG hex and read messages:", hex_message, read_message)
         write_check = self.send(read_message)
-        #~ print("Write_check:", write_check)
-
-        #~ if write_check[-1] != crc_2:
-            #~ print("CRC output error. Sent:", crc_2, "Recevied:", write_check[-1])
-            #~ self.end()
-
         if write_check[1] == read_message[0]:
             read = self.read_register(register_location)
             if read == -1:
@@ -360,13 +352,9 @@ class ADC1261:
                 #~ print("Register written successfully.")
                 #~ print("Read register location:", register_location, "Read data:", format(read,'08b'))
                 pass
-            elif register_location.upper() == 'STATUS':
-                pass
-            else:
+            elif register_location.upper() != 'STATUS':
                 print("Unexplained fail regarding writing to a register. Read back was unexpected.")
                 print("Register Location:", register_location, "- Read back:", read, "- Written/sent back:", write_check, "- Data sent:", int(register_data,2))
-#                self.end()
-                pass
         else:
             print("Error writing register - failed WREG command")
             print("DIN [0]:", hex_message, "- DOUT [1]:", write_check)
@@ -491,7 +479,7 @@ class ADC1261:
         # Join into single bit string
         input_bitstring = ''.join(input_bitstring)
         # Check that our bit string is actually a string of 0s and 1s
-        if (input_bitstring[0] != '0' and input_bitstring[0] != '1'):
+        if input_bitstring[0] not in ['0', '1']:
             print("Error with CRC remainder bitstring. This doesn't seem like a bitstring")
             print("You sent:", input_bitstring)
             sys.exit()
@@ -503,21 +491,21 @@ class ADC1261:
 
         polynomial_bitstring = polynomial_bitstring.lstrip('0')
         len_input = len(input_bitstring)
-        
+
         if check_value is None:
             # add initial padding for division
             initial_padding = '0' * (len(polynomial_bitstring) - 1)
         else:
             # check the value
             initial_padding = check_value
-        
+
         input_padded_array = list(input_bitstring + initial_padding)
-        
+
         while '1' in input_padded_array[:len_input]:
             cur_shift = input_padded_array.index('1')
             for i in range(len(polynomial_bitstring)):
                 input_padded_array[cur_shift + i] = str(int(polynomial_bitstring[i] != input_padded_array[cur_shift + i]))
-        
+
         if check_value is None:
             return ''.join(input_padded_array)[len_input:]
         else:
@@ -727,8 +715,6 @@ class ADC1261:
         if GPIO.input(self.drdy):
             self.gpio("START","low") # stops the ADC from taking measurements
             return 0
-        else:
-            pass
     
     def reset(self):
         self.gpio(command="RESET", status = "low")
@@ -818,7 +804,7 @@ class ADC1261:
         repeats = 100000
         self.stop()
         start = time.time()
-        for i in range(repeats):
+        for _ in range(repeats):
             #~ self.stop()
             self.set_frequency(data_rate = 20, print_freq = False)
             #~ self.start1()
@@ -830,11 +816,13 @@ class ADC1261:
     def calculate_reference(self, no_samples = 20):
         self.setup_measurements()
         all_samples = []
-        analog_supply = self.power_readback(); 
+        analog_supply = self.power_readback();
         #~ print("AVDD - AVSS (mV):", analog_supply)
         #~ analog_supply = 5080
         self.reference_config(reference_enable = 1)
-        self.mode1(); self.mode2(); self.mode3()
+        self.mode1()
+        self.mode2()
+        self.mode3()
         #~ self.print_reference_config()
         #~ self.mode1(CHOP = '4-wire ac-excitation')
 #        self.print_mode1()
@@ -848,19 +836,17 @@ class ADC1261:
             GPIO2 = 1,
             GPIO1 = 0,
             GPIO0 = 0)
-        
+
         self.choose_inputs(positive = 'AIN0', negative = 'AIN1')
         self.PGA()
-        
+
         self.start1()
         while(len(all_samples) < no_samples):
            all_samples.append(self.collect_measurement(method = 'hardware', 
                                 reference = analog_supply, gain = 1))
-                                
+
         all_samples = np.array(all_samples)
-        #~ print(all_samples)
-        reference = np.average(np.absolute(all_samples))
-        return reference
+        return np.average(np.absolute(all_samples))
         
     def ac_simple(self, measurement_type = 'DC'):
         ''' Frequency removed for easier change in other areas of future code. '''
@@ -949,10 +935,8 @@ class ADC1261:
             self.stop()
             self.choose_inputs(positive = terminals[j], negative = terminals[j+1])
             self.start1()
-            samples = []
-            for i in range(1,10):
-                samples.append(self.collect_measurement(method='hardware', 
-                reference=external_reference, gain = gain))
+            samples = [self.collect_measurement(method='hardware', 
+                reference=external_reference, gain = gain) for _ in range(1,10)]
             print("Positive:", terminals[j], "Negative:", terminals[j+1], "-", np.median(samples), "mV")
         return 0
     
@@ -1042,31 +1026,28 @@ class ADC1261:
                                 response = self.convert_to_mV(read[3:6], reference = reference, gain = gain)
                         elif status == 'disabled' and crc == 'disabled':
                             response = self.convert_to_mV(read[2:5], reference = reference, gain = gain)
-                        elif status != 'disabled' and crc != 'disabled':
+                        elif status != 'disabled':
                             out_crc2, status_byte = read[3], format(read[2], '08b')
                             response = self.convert_to_mV(read[5:8], reference = reference, gain = gain)
                             out_crc3 = read[8]
-                        elif status == 'disabled' and crc != 'disabled':
+                        else:
                             out_crc2 = read[3]
                             response = self.convert_to_mV(read[4:7], reference = reference, gain = gain)
                             out_crc3 = read[8]
-                        else:
-                            print("Error in collect_measurement - status or crc not 'disabled'.")
                         if response not in [None, 'None']:
                             response = float(response)
                             return response
                         else:
-                            response = -1        
+                            response = -1
                     else:
                         response = -1
-                                                                          
+
                 except KeyboardInterrupt:
                     self.end()
                 except: 
                     #~ print("Wow! No new conversion??", i)
                     i+=1
-                    pass
-                #~ i += 1
+                        #~ i += 1
         elif method.lower() == 'software':
             DRDY_status = 'not new'
             while DRDY_status.lower() != 'new':
@@ -1077,14 +1058,11 @@ class ADC1261:
                         read = self.send(rdata)
                         response = self.convert_to_mV(read[2:5], reference = reference, gain = gain)
                         return response
-                    else:
-                        pass
                 except KeyboardInterrupt:
                     self.end()
                 except: 
                     print("Wow! No new conversion??")
                     i+=1
-                    pass
         else:
             print("Missing method to collect measurement. Please select either 'hardware' or 'software'.")
             
@@ -1096,15 +1074,11 @@ class ADC1261:
         MSB, MID, LSB = array
         bit24 = (MSB<<16)+(MID<<8)+LSB
         #~ print("bit24:", bit24)
-        if MSB>127: # i.e. signed negative
-            bits_from_fullscale = (2**24-bit24)
+        if MSB <= 127:
+            return bit24*reference/(gain*2**23)
+        bits_from_fullscale = (2**24-bit24)
             #~ print(bits_from_fullscale, reference, gain)
-            mV = -bits_from_fullscale*reference/(gain*2**23)
-            #~ print(mV)
-        else:
-            mV = bit24*reference/(gain*2**23)
-        #~ print("mV:", mV)
-        return mV
+        return -bits_from_fullscale*reference/(gain*2**23)
             
     def check_noise(self, filename, digital_filter='FIR'):
         
@@ -1124,31 +1098,25 @@ class ADC1261:
             for sample in samples:
                 sample = str(sample)
                 noise[rate][sample] = []
-                if float(sample)/float(rate) > 120:
-                    pass
-                else:
+                if float(sample) / float(rate) <= 120:
                     print("No. samples:", sample)
-                    i = 0 
                     time_start = time.time()
-                    while(i<int(sample)):
+                    for i in range(int(sample)):
                         if time.time() - time_start > 10:
                             print("Rate:", rate, ", Samples to collect:", sample, ", Samples so far:", i)
                             time_start = time.time()
-                        else:
-                            pass
                         response = self.collect_measurement()
                         noise[str(rate)][str(sample)] = np.append(noise[str(rate)][str(sample)],response)
-                        i+=1
         print("Noise:",noise)
-        
+
         csv_file = "/home/pi/Documents/ads1261evm/"+filename+"_"+digital_fiter+"_noise.csv"
         fieldnames = ['Rate (SPS)', 'No. of Samples', 'Response (mV)']
         try:
             with open(csv_file, 'w') as csvfile:
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
-                for rate in noise:
-                    for sample in noise[rate]:
+                for rate, value in noise.items():
+                    for sample in value:
                         for response in noise[rate][sample]:
                             writer.writerow({
                                             fieldnames[0]:float(rate),
@@ -1177,9 +1145,9 @@ class ADC1261:
     
     def verify_noise(self, positive = 'AIN9', negative = 'AIN8'):
         print("\nPlease check that", positive, "and", negative,"are shorted.\n")
-        
+
         self.setup_measurements()
-        
+
         print("Verifying noise from ADS1261 data sheet...\n")
         self.choose_inputs(positive = positive, negative = negative)
         self.reference_config(reference_enable=1) # use internal reference
@@ -1209,8 +1177,6 @@ class ADC1261:
                             if type(response_uV) == float:
                                 responses.append(response_uV)
                                 i += 1
-                            else:
-                                pass
                         except KeyboardInterrupt: self.end()
                         except:
                             pass
@@ -1220,65 +1186,55 @@ class ADC1261:
                     print("Gain:",gain, "\tData rate (SPS):", rate, "\tDigital Filter:", each_filter, "\tRMS Noise (uV):", uV_RMS, "\tPeak to peak noise (uV):", uV_PP)
 
         # append to dataframe 
-    
+
         # compare to downloaded data sheet
-        
+
         return 0
     
     def noise_quickcheck(self):
         pulse_16, pulse_64, continuous_16, continuous_64 = [], [], [], []
         self.mode1(CHOP='normal', CONVRT='pulse', DELAY = '50us')
-        while(len(pulse_16) < 17):
+        while (len(pulse_16) < 17):
             self.gpio("START", "high")
             try:
                 response = self.collect_measurement(method='hardware')
                 if type(response) == float:
                     pulse_16.append(response)
                     self.gpio("START", "low")
-                else:
-                    pass
             except:
                 pass
-        while(len(pulse_16) < 17):
+        while (len(pulse_16) < 17):
             self.gpio("START", "high")
             try:
                 response = self.collect_measurement(method='hardware')
                 if type(response) == float:
                     pulse_16.append(response)
                     self.gpio("START", "low")
-                else:
-                    pass
             except:
                 pass
-        while(len(pulse_64) < 65):
+        while (len(pulse_64) < 65):
             self.gpio("START", "high")
             try:
                 response = self.collect_measurement(method='hardware')
                 if type(response) == float:
                     pulse_64.append(response)
                     self.gpio("START", "low")
-                else:
-                    pass
             except:
                 pass
         self.mode1(CHOP='normal', CONVRT='continuous', DELAY = '50us')
         self.start1()
-        while(len(continuous_16) < 17):
+        while (len(continuous_16) < 17):
             try:
                 response = self.collect_measurement(method='hardware')
                 if type(response) == float:
                     continuous_16.append(response)
-                else:
-                    pass
             except:
                 pass
-        while(len(continuous_64) < 65):
+        while (len(continuous_64) < 65):
             try:
                 response = self.collect_measurement(method='hardware')
                 if type(response) == float:
-                    continuous_64.append(response)  
-                else:
-                    pass
+                    continuous_64.append(response)
             except:
                 pass
         print("\nStandard deviation of 16 pulsed samples:", np.std(np.array(pulse_16))*1000, "uV RMS")
@@ -1299,7 +1255,7 @@ class ADC1261:
             print("'dict' not supported at this time. Please choose 'csv'")
         else: 
             print("Unknown source type. Please enter source_type = 'dict' or 'csv'")
-        
+
         sample_mean = round(noise.ix[:,str(columns[2])].mean(),2)
         print(sample_mean)
         sample_groups = noise.groupby([str(columns[0]),str(columns[1])], as_index=True).std()
@@ -1309,9 +1265,7 @@ class ADC1261:
         markers = [(i,j,0) for i in range(2,10) for j in range(1,3)]
         a = 0
         for rate, samples in sample_groups.index:
-            if rate == previousRate:
-                pass
-            else:
+            if rate != previousRate:
                 x = []
                 y = []
                 for no_of_samples in sample_groups.loc[rate].index:
@@ -1321,20 +1275,19 @@ class ADC1261:
                 previousRate = rate
                 if a == 15: a = 0
                 else: a +=1
-        
+
         x = plt.legend(bbox_to_anchor=(1.01,1), loc=2, borderaxespad=0.1, title="Sample rate (Hz)")
         plt.xlabel('Number of samples')
         plt.ylabel('Standard deviation (\u03BCV)')
         plt.title('Noise analysis for a nominal {} mV input with a {} filter'.format(sample_mean, digital_filter))
-        
+
         head,tail = ntpath.split(noise_location)
         filename = tail.split(".")[0]
-        
+
         plt.savefig(filename+'.png', dpi=150, bbox_extra_atrists=(x), bbox_inches='tight')
         plt.show()
         print("Plot saved as:", noise_location.split(".")[0]+".png")
-        result = 0
-        return result
+        return 0
         
     def check_actual_sample_rate(self, method='software', rate = 1200, duration = 10):
         # check how many samples are received at rate after duration seconds. [rate is in SPS, duration is in seconds].
@@ -1354,7 +1307,7 @@ class ADC1261:
                 #~ samples.append(response)
         time_finish = time.time()
         #~ actual = float(np.size(samples))/float(duration)
-        i = i/float(duration)
+        i /= float(duration)
         print("Desired sample rate:", rate, "SPS")
         #~ print("Actual sample rate:", actual, "SPS")
         print("Actual iteration rate:", i, "SPS")
@@ -1380,7 +1333,7 @@ class ADC1261:
         print("Samples collected:", i)
         Fs = i/float(duration)
         print("Actual sample rate:", Fs, "SPS")
-        
+
         # need to interpolate between data points before applying fft (fft requires uniform sampling rate)
         # need to implement python millis
         samples_fft = np.asarray(samples)*1e6
@@ -1394,12 +1347,10 @@ class ADC1261:
         freq_range = freq[range(fft.shape[0])]
         print("creating figure...")
         fig, ax = plt.subplots(2,1)
-        
+
         # Make the vectors the same length
         if len(t) > len(samples): t = t[:-(len(t)-len(samples))]
         elif len(t) < len(samples): samples = samples[:-(-len(t)+len(samples))]
-        else: pass
-        
         ax[0].plot(t,samples, 'b')
         ax[0].set_xlabel("Time (s)")
         ax[0].set_ylabel("Potential (mV)")
@@ -1486,17 +1437,17 @@ class ADC1261:
         else:
             if (current1 not in self.IMAG_register):
                 print("IMAG value not available.\nYou requested",current1,"but only",str(list(self.IMAG_register.keys())),"are available in uA.")
-            elif (current2 not in self.IMAG_register):
+            else:
                 print("IMAG value not available.\nYou requested",current2,"but only",str(list(self.IMAG_register.keys())),"are available in uA.")
             self.end()
-        
+
         return current1, current2
     
     def current_out_pin(self, IMUX1 = 'NONE', IMUX2 = 'NONE'):
         #print("Current pin activated")
         IMUX1 = str(IMUX1).upper()
         IMUX2 = str(IMUX2).upper()
-        if IMUX1 == IMUX2 and IMUX1 != 'NONE':
+        if IMUX1 == IMUX2:
             print("IMUX1 and IMUX2 are both the same pin. They must either be different output pins, or both be 'NONE'.")
             # self.end()
         p,n = self.check_reference_config()[-2:]
@@ -1515,7 +1466,7 @@ class ADC1261:
         else:
             print("IMUX1 value not available.\nYou requested '" + IMUX1 + "' but only "+str(list(self.OUTPMUXregister.keys()))+" are available.")
             self.end()
-    
+
         return IMUX1, IMUX2
         
     def check_current(self):
@@ -1617,10 +1568,8 @@ class ADC1261:
     def check_burn_out_current_source(self, print_data = False):
         read = self.read_register('INPBIAS')
         byte_string = list(map(int,format(read,'08b')))
-        if byte_string[3] == 0: Vbias = 'disabled'
-        else: Vbias = 'enabled'
-        if byte_string[4] == 0: polarity = 'pull-up mode'
-        else: polarity = 'pull-down mode'
+        Vbias = 'disabled' if byte_string[3] == 0 else 'enabled'
+        polarity = 'pull-up mode' if byte_string[4] == 0 else 'pull-down mode'
         magnitude = self.inv_BOCSmagnitude_register[int(''.join(str(i) for i in byte_string[5:8]),2)]
         if print_data == True:
             print(" ***Burn out current source and Vbias (INPBIAS) register: ***")
@@ -1643,16 +1592,11 @@ class ADC1261:
         self.start1()
         response='none'
         #~ while(type(response)!=float):
-        while(True):
+        while True:
             try:
                 response = self.collect_measurement(method=method)
                 if type(response) == float:
                     print("Response:",response," mV")
-                    pass
-                else:
-                    #~ print("Response was not a float.")
-                    #~ print(response)
-                    pass
                 time.sleep(delay)
             except KeyboardInterrupt:
                 self.end()
